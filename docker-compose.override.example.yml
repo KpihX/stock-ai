@@ -1,7 +1,7 @@
 services:
   api:
     ports:
-      - "8080:8000"
+      - "8080:8080"
     environment:
       STOCKLINE_DATABASE_URL: postgresql://stockline:stockline@postgres:5432/stockline
 

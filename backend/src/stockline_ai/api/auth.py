@@ -45,6 +45,10 @@ def verify_token(token: str = Depends(oauth2)) -> str:
 
 
 def check_credentials(username: str, password: str) -> bool:
-    expected_user = os.environ.get("STOCKLINE_ADMIN_USER", "manager")
-    expected_password = get_secret("STOCKLINE_ADMIN_PASSWORD", required=False) or "stockline"
+    expected_user = os.environ.get("STOCKLINE_ADMIN_USER")
+    if not expected_user:
+        raise RuntimeError("STOCKLINE_ADMIN_USER is not configured")
+    expected_password = os.environ.get("STOCKLINE_ADMIN_PASSWORD")
+    if not expected_password:
+        raise RuntimeError("STOCKLINE_ADMIN_PASSWORD is not configured")
     return username == expected_user and password == expected_password

@@ -92,7 +92,9 @@ refresh();setInterval(refresh,3000);
 
 
 def _admin(user: str = Depends(verify_token)) -> str:
-    expected = os.environ.get("STOCKLINE_ADMIN_USER", "manager")
+    expected = os.environ.get("STOCKLINE_ADMIN_USER")
+    if not expected:
+        raise HTTPException(status_code=503, detail="STOCKLINE_ADMIN_USER is not configured")
     if user != expected:
         raise HTTPException(status_code=403, detail="Admin role required")
     return user
