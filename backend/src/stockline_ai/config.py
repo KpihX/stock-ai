@@ -29,7 +29,6 @@ DEFAULT_SELECTION: dict[str, str] = {
     "ocr": "tesseract",
     "tts": "edge_tts",
     "agent_llm": "nvidia",
-    "decision": "jev",
 }
 
 _MODEL_PARAM: dict[str, str] = {
@@ -37,7 +36,6 @@ _MODEL_PARAM: dict[str, str] = {
     "ocr": "languages",
     "tts": "voice",
     "agent_llm": "model",
-    "decision": "model",
 }
 
 
@@ -65,6 +63,7 @@ class Config:
     settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     overrides: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     runtime: dict[str, Any] = field(default_factory=dict)
+    system_prompt: str = ""
     config_path: Path = _DEFAULT_CONFIG_PATH
 
     @classmethod
@@ -76,6 +75,7 @@ class Config:
             settings=dict(data.get("settings") or {}),
             overrides=dict(data.get("overrides") or {}),
             runtime=dict(data.get("runtime") or {}),
+            system_prompt=str(data.get("system_prompt", "")),
             config_path=path or _DEFAULT_CONFIG_PATH,
         )
 

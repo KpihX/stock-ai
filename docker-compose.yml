@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: stockline-postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${DB_NAME:-stockline}
+      POSTGRES_USER: ${DB_USER:-stockline}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockline}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-stockline}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - proxy
+      - stockline
+
+  api:
+    build:
+      context: ./backend
+    container_name: stockline-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      STOCKLINE_DATABASE_URL: postgresql://${DB_USER:-stockline}:${POSTGRES_PASSWORD:-stockline}@postgres:5432/${DB_NAME:-stockline}
+      STOCKLINE_API_URL: http://localhost:8000
+      WHATS_PROXY_STATE_DIR: /app/wa-state
+    volumes:
+      - wa_session:/app/wa-state
+    depends_on:
+      postgres:
+        condition: service_healthy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.stockline.rule=Host(`stockline-ai.kpihx-labs.com`)"
+      - "traefik.http.routers.stockline.entrypoints=websecure"
+      - "traefik.http.routers.stockline.tls=true"
+      - "traefik.http.services.stockline.loadbalancer.server.port=8000"
+    networks:
+      - proxy
+      - stockline
+
+volumes:
+  pg_data:
+  wa_session:
+
+networks:
+  proxy:
+    external: true
+  stockline:
+    driver: bridge

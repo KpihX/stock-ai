@@ -6,8 +6,7 @@
     "stt": "whisper",
     "ocr": "tesseract",
     "tts": "edge_tts",
-    "agent_llm": "nvidia",
-    "decision": "jev"
+    "agent_llm": "nvidia"
   },
 
   // Provider-agnostic settings, keyed by brick. Keys stay generic on purpose:
@@ -33,13 +32,11 @@
     "agent_llm": {
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "base_url": "https://integrate.api.nvidia.com/v1"
-    },
-    "decision": {
-      "model": "jev-latest",
-      "base_url": "https://api.typesafe.ai/v1",
-      "endpoint": "/systemone"
     }
   },
+
+  // Prompt of the normalization node. Kept in config, never in code.
+  "system_prompt": "You convert a wholesale food order into a precise summary and order lines. The user message contains the raw order and enriched client data. Use the provided tools when you need the client history. Return a single JSON object with two keys: summary, one precise French sentence with each article, quantity, today price and delivery date; order_lines, an array of objects with keys product_id, quantity, price, recorded_at and delivery_date. Never invent a price or a product id. Use only values present in the input or returned by tools.",
 
   // Optional per-provider overrides. Resolution order for a parameter is:
   // overrides.<brick>.<selected provider> -> settings.<brick> -> registry default.

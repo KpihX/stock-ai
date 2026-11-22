@@ -1,27 +1,14 @@
-# Python
 .venv/
 __pycache__/
 *.pyc
-*.pyo
+.pytest_cache/
+.ruff_cache/
 dist/
-build/
-*.egg-info/
-
-# Env and secrets
+node_modules/
+.vercel/
 .env
 .env.*
 !*.env.example
-
-# Test and coverage
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Scratch
 tmp/
-
-# IDE and OS
-.idea/
-.vscode/
-.DS_Store
-*.swp
+refs/
+*.log

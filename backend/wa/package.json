@@ -1,0 +1,17 @@
+{
+  "name": "stockline-wa",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@hapi/boom": "^9.1.4",
+    "@whiskeysockets/baileys": "github:ayusc/Baileys",
+    "tsx": "^4.20.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

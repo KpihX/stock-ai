@@ -41,7 +41,7 @@ def test_default_selection_matches_the_hackathon_choices() -> None:
     assert CONFIG.provider("ocr") == "tesseract"
     assert CONFIG.provider("tts") == "edge_tts"
     assert CONFIG.provider("agent_llm") == "nvidia"
-    assert CONFIG.provider("decision") == "jev"
+    assert CONFIG.system_prompt.startswith("You convert")
 
 
 def test_mapping_can_swap_a_brick_without_code_change() -> None:

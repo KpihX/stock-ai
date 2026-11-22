@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-BRICKS: tuple[str, ...] = ("messaging", "stt", "ocr", "tts", "agent_llm", "decision")
+BRICKS: tuple[str, ...] = ("messaging", "stt", "ocr", "tts", "agent_llm")
 
 
 @dataclass(frozen=True)
@@ -112,33 +112,12 @@ AGENT_LLM: dict[str, ProviderSpec] = {
     ),
 }
 
-DECISION: dict[str, ProviderSpec] = {
-    "jev": ProviderSpec(
-        key="jev",
-        label="TypeSafe AI Jev decision model, typed answers with confidence",
-        model="jev-latest",
-        base_url="https://api.typesafe.ai/v1",
-        api_key_env=("TYPESAFE_API_KEY",),
-    ),
-    "llm_as_judge": ProviderSpec(
-        key="llm_as_judge",
-        label="Use the active agent LLM as a structured decision fallback",
-        model="",
-    ),
-    "rules": ProviderSpec(
-        key="rules",
-        label="Deterministic rule engine, no network and no key",
-        model="",
-    ),
-}
-
 REGISTRIES: dict[str, dict[str, ProviderSpec]] = {
     "messaging": MESSAGING,
     "stt": STT,
     "ocr": OCR,
     "tts": TTS,
     "agent_llm": AGENT_LLM,
-    "decision": DECISION,
 }
 
 

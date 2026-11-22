@@ -16,6 +16,12 @@ dependencies = [
     "httpx",
     "edge-tts",
     "json5>=0.17.3",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "asyncpg>=0.29",
+    "openai>=1.40",
+    "sse-starlette>=2.0",
+    "pyjwt>=2.8",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +46,7 @@ dev = [
 
 [project.scripts]
 stockline-ai = "stockline_ai.cli:app"
+stockline-api = "stockline_ai.api.main:run"
 
 [tool.uv]
 package = true
