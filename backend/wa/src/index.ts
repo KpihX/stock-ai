@@ -21,6 +21,7 @@ import makeWASocket, {
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
+import QRCode from 'qrcode'
 
 const API_URL = process.env.STOCKLINE_API_URL || 'http://api:8000'
 const STATE_DIR = process.env.WHATS_PROXY_STATE_DIR || '/app/wa-state'
@@ -44,6 +45,8 @@ interface SendRequest {
 }
 
 let sock: ReturnType<typeof makeWASocket> | null = null
+let currentQr: { dataUrl: string; at: number } | null = null
+let status = 'disconnected'
 
 function canonicalPhone(value: string): string {
   return value.replace(/[^0-9]/g, '')
@@ -88,12 +91,26 @@ async function connect(): Promise<void> {
 
   sock.ev.on('connection.update', (update: any) => {
     const { connection, lastDisconnect, qr } = update
-    if (qr) console.log('[wa] pairing required, scan QR with WhatsApp Linked Devices')
+    if (qr) {
+      status = 'qr_pending'
+      QRCode.toDataURL(qr)
+        .then((dataUrl: string) => {
+          currentQr = { dataUrl, at: Date.now() }
+          console.log('[wa] QR ready for pairing')
+        })
+        .catch((error: unknown) => console.error('[wa] QR render failed', error))
+    }
     if (connection === 'close') {
+      status = 'disconnected'
+      currentQr = null
       const code = (lastDisconnect?.error as Boom)?.output?.statusCode
       if (code !== DisconnectReason.loggedOut) void connect()
     }
-    if (connection === 'open') console.log(`[wa] connected as ${sock?.user?.id || '?'}`)
+    if (connection === 'open') {
+      status = 'connected'
+      currentQr = null
+      console.log(`[wa] connected as ${sock?.user?.id || '?'}`)
+    }
   })
 
   sock.ev.on('messages.upsert', async ({ messages, type }: any) => {
@@ -135,6 +152,35 @@ function readBody(request: IncomingMessage): Promise<string> {
 const server = createServer(async (request, response) => {
   if (request.method === 'GET' && request.url === '/health') {
     sendJson(response, 200, { status: 'ok', connected: sock !== null })
+    return
+  }
+  if (request.method === 'GET' && request.url === '/status') {
+    sendJson(response, 200, {
+      status,
+      phone: sock?.user?.id || '',
+      qr_ready: currentQr !== null,
+    })
+    return
+  }
+  if (request.method === 'GET' && request.url === '/qr') {
+    if (!currentQr || Date.now() - currentQr.at > 60_000) {
+      sendJson(response, 404, { error: 'no QR available' })
+      return
+    }
+    sendJson(response, 200, { qr: currentQr.dataUrl })
+    return
+  }
+  if (request.method === 'POST' && request.url === '/connect') {
+    if (!sock) void connect()
+    sendJson(response, 200, { status: 'connecting' })
+    return
+  }
+  if (request.method === 'POST' && request.url === '/disconnect') {
+    sock?.ws?.close()
+    sock = null
+    status = 'disconnected'
+    currentQr = null
+    sendJson(response, 200, { status: 'disconnected' })
     return
   }
   if (request.method === 'POST' && request.url === '/send') {

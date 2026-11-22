@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from ..config import CONFIG
-from . import db
+from . import admin, db
 from .auth import check_credentials, create_token, verify_token
 from .events import BUS
 from .pipeline import handle_signal, set_event_bus
@@ -48,6 +48,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(admin.router)
 
 
 def run() -> None:
@@ -150,6 +151,14 @@ async def client_stats(client_id: str, _: str = Depends(verify_token)) -> dict[s
 @app.get("/api/products", response_model=list[Product])
 async def products(_: str = Depends(verify_token)) -> list[Product]:
     return [Product(**row) for row in await db.fetch_products()]
+
+
+@app.get("/api/clients")
+async def clients(_: str = Depends(verify_token)) -> dict[str, Any]:
+    rows = await db.pool().fetch(
+        "SELECT client_id, phone_number, client_name FROM client ORDER BY client_id"
+    )
+    return {"items": [dict(r) for r in rows]}
 
 
 @app.get("/api/purchases")

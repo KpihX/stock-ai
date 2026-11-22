@@ -9,9 +9,12 @@
   "dependencies": {
     "@hapi/boom": "^9.1.4",
     "@whiskeysockets/baileys": "github:ayusc/Baileys",
+    "qrcode": "^1.5.4",
     "tsx": "^4.20.6"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
     "typescript": "^5.9.0"
   }
 }

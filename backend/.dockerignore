@@ -8,6 +8,5 @@ __pycache__/
 .ruff_cache/
 .venv/
 tests/
-README.md
 CHANGELOG.md
 TODO.md

@@ -1,4 +1,5 @@
 FROM node:22-alpine AS wa-builder
+RUN apk add --no-cache git
 WORKDIR /wa
 COPY wa/package.json wa/tsconfig.json ./
 COPY wa/src ./src
@@ -11,18 +12,27 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 COPY config.jsonc ./config.jsonc
+COPY README.md ./README.md
 RUN uv sync --frozen --no-dev
+
+FROM node:22-bookworm-slim AS wa-runtime
+WORKDIR /app/wa
+COPY --from=wa-builder /wa/node_modules ./node_modules
+COPY --from=wa-builder /wa/src ./src
+COPY --from=wa-builder /wa/package.json ./package.json
 
 FROM python:3.14-slim-bookworm AS runtime
 WORKDIR /app
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng libpq5 nodejs \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng libpq5 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=py-builder /app/.venv /app/.venv
 COPY --from=py-builder /app/config.jsonc /app/config.jsonc
 COPY --from=py-builder /app/src /app/src
-COPY --from=wa-builder /wa /app/wa
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
+COPY --from=wa-runtime /app/wa /app/wa
+COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH" PYTHONUNBUFFERED=1
 ENV STOCKLINE_WA_URL=http://localhost:3001
 EXPOSE 8000
-CMD ["sh", "-c", "cd /app/wa && node_modules/.bin/tsx src/index.ts & exec stockline-api"]
+CMD ["sh", "-c", "cd /app/wa && /usr/local/bin/node node_modules/.bin/tsx src/index.ts & exec stockline-api"]
