@@ -1,0 +1,59 @@
+{
+  // Brick selection. Change one id to swap that brick overnight.
+  // Valid ids are listed in src/stockline_ai/providers.py.
+  "selection": {
+    "messaging": "baileys",
+    "stt": "whisper",
+    "ocr": "tesseract",
+    "tts": "edge_tts",
+    "agent_llm": "nvidia",
+    "decision": "jev"
+  },
+
+  // Provider-agnostic settings, keyed by brick. Keys stay generic on purpose:
+  // "model", "voice", "languages", "bin", "base_url" and "endpoint" mean the
+  // same thing whatever provider is selected above.
+  "settings": {
+    "messaging": {
+      "bin": "whats-proxy",
+      "state_dir": "~/.local/share/whats-proxy"
+    },
+    "stt": {
+      "bin": "whisper-cli",
+      "model": "ggml-large-v3-turbo-q5_0.bin",
+      "models_dir": "~/.local/share/whisper-cpp"
+    },
+    "ocr": {
+      "bin": "tesseract",
+      "languages": "eng+fra"
+    },
+    "tts": {
+      "voice": "fr-FR-DeniseNeural"
+    },
+    "agent_llm": {
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "base_url": "https://integrate.api.nvidia.com/v1"
+    },
+    "decision": {
+      "model": "jev-latest",
+      "base_url": "https://api.typesafe.ai/v1",
+      "endpoint": "/systemone"
+    }
+  },
+
+  // Optional per-provider overrides. Resolution order for a parameter is:
+  // overrides.<brick>.<selected provider> -> settings.<brick> -> registry default.
+  // Example: switch selection.tts to "piper" and uncomment the block below.
+  "overrides": {
+    // "tts": {
+    //   "piper": { "voice": "fr_FR-siwis-medium" }
+    // }
+  },
+
+  // Generic runtime values. Paths use ~ so the project stays portable.
+  "runtime": {
+    "state_dir": "~/.local/share/stockline-ai",
+    "hitl_timeout_seconds": 600,
+    "debug": false
+  }
+}

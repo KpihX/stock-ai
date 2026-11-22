@@ -1,0 +1,69 @@
+[project]
+name = "stockline-ai"
+version = "0.1.0"
+description = "Agentic AI for the food supply chain: voice orders, demand forecasting and supervised purchasing"
+readme = "README.md"
+authors = [{ name = "Ivann Kamdem", email = "kapoivha@gmail.com" }]
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
+dependencies = [
+    "typer",
+    "rich",
+    "python-dotenv",
+    "pydantic>=2",
+    "pydantic-ai",
+    "httpx",
+    "edge-tts",
+    "json5>=0.17.3",
+]
+
+[project.optional-dependencies]
+forecast = [
+    "statsforecast",
+    "darts",
+]
+voice = [
+    "pipecat-ai",
+]
+decision = [
+    "von-sdk>=1.3.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "pyright",
+]
+
+[project.scripts]
+stockline-ai = "stockline_ai.cli:app"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "stockline_ai"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.stockline_ai.contract]
+schema_version = "stockline.contract.v1"
+source = "CONTRACT.md"
+# The contract version follows [project].version and is never repeated here.
