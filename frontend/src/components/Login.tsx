@@ -31,7 +31,7 @@ export default function Login({ onLogin }: LoginProps) {
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="login-logo">S</div>
         <h1 className="login-brand">Stockline</h1>
-        <p className="login-subtitle">Manager dashboard</p>
+        <p className="login-subtitle">Admin dashboard</p>
 
         <label className="field">
           <span>Username</span>

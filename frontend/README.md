@@ -1,6 +1,6 @@
 # Stockline frontend
 
-Minimal Vite + React + TypeScript dashboard for the Stockline manager. It talks to the FastAPI backend over HTTP, streams new commands with SSE, and opens a WebSocket for live calls.
+Minimal Vite + React + TypeScript dashboard for the Stockline admin. It talks to the FastAPI backend over HTTP, streams new commands with SSE, and opens a WebSocket for live calls.
 
 ## Run locally
 

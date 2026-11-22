@@ -1,4 +1,4 @@
-"""Minimal JWT auth for the single manager account."""
+"""Minimal JWT auth for the single admin account."""
 
 from __future__ import annotations
 

@@ -12,6 +12,7 @@ help:  ## Show available targets
 
 init:  ## Create .env and generate missing local secrets
 	@test -f .env || cp .env.example .env
+	@test -f docker-compose.override.yml || cp docker-compose.override.example.yml docker-compose.override.yml
 	@for key in JWT_SECRET POSTGRES_PASSWORD STOCKLINE_ADMIN_PASSWORD; do \
 	  if ! grep -q "^$$key=.\+" .env; then \
 	    sed -i "s|^$$key=.*|$$key=$$(openssl rand -base64 48)|" .env; \

@@ -18,11 +18,10 @@ deploy_homelab:
     - echo "DB_NAME=stockline" >> .env
     - echo "DB_USER=stockline" >> .env
     - echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> .env
-    - echo "STOCKLINE_ADMIN_USER=$STOCKLINE_ADMIN_USER" >> .env
+    - echo "STOCKLINE_ADMIN_USER=admin" >> .env
     - echo "STOCKLINE_ADMIN_PASSWORD=$STOCKLINE_ADMIN_PASSWORD" >> .env
     - docker compose build --no-cache
     - docker compose up -d --remove-orphans
     - docker image prune -f
   after_script:
     - docker run --rm -v "$PWD:/work" alpine chown -R $(id -u):$(id -g) /work
-
