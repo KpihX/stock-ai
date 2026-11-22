@@ -31,6 +31,7 @@ External runtime already installed on this machine: whats-proxy for Baileys and 
 - The package version has exactly one source: the project.version field in pyproject.toml. Read it with stockline_ai.version.get_version(). Never write a version literal in code, config.jsonc, docs or the CLI. Derive it everywhere.
 - No information is duplicated in two places. One source of truth per value, derive or reference it everywhere else: pyproject.toml for metadata, config.jsonc for configuration, providers.py for provider ids and defaults. Prefer a dynamic read over a copy.
 - Starting 2026-11-22 the agent must never edit anything under .agents/. No file, no exception, including logs, skills, rules or context. This is a standing rule for every future session in this project.
+- Starting 2026-11-22 the agent must never rewrite an existing file. The Edit tool is the only way to modify a file, even for a large change. The Write tool is reserved for a genuinely new file that does not exist yet. This rule has no exception and applies to every future session in this project.
 - No hardcoded absolute paths. Use Path.home() or the paths declared in config.py.
 - English for all files and comments. Match the language of the chat for replies.
 - Public API explicit, internals prefixed with an underscore, no god modules.
