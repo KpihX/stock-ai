@@ -35,13 +35,6 @@ STT: dict[str, ProviderSpec] = {
         label="Local whisper.cpp with the multilingual ggml turbo model",
         model="ggml-large-v3-turbo-q5_0.bin",
     ),
-    "groq_whisper": ProviderSpec(
-        key="groq_whisper",
-        label="Groq hosted Whisper large v3",
-        model="whisper-large-v3",
-        base_url="https://api.groq.com/openai/v1",
-        api_key_env=("GROQ_API_KEY",),
-    ),
 }
 
 OCR: dict[str, ProviderSpec] = {
@@ -49,13 +42,6 @@ OCR: dict[str, ProviderSpec] = {
         key="tesseract",
         label="Local Tesseract with English and French language data",
         model="eng+fra",
-    ),
-    "gemini_vision": ProviderSpec(
-        key="gemini_vision",
-        label="Gemini vision for photographed handwritten lists",
-        model="gemini-2.5-flash",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        api_key_env=("GEMINI_API_KEY",),
     ),
 }
 
@@ -81,34 +67,6 @@ AGENT_LLM: dict[str, ProviderSpec] = {
         model="nvidia/nemotron-3-ultra-550b-a55b",
         base_url="https://integrate.api.nvidia.com/v1",
         api_key_env=("NVIDIA_API_KEY",),
-    ),
-    "groq": ProviderSpec(
-        key="groq",
-        label="Groq fast inference",
-        model="llama-3.3-70b-versatile",
-        base_url="https://api.groq.com/openai/v1",
-        api_key_env=("GROQ_API_KEY",),
-    ),
-    "cerebras": ProviderSpec(
-        key="cerebras",
-        label="Cerebras high token budget",
-        model="gpt-oss-120b",
-        base_url="https://api.cerebras.ai/v1",
-        api_key_env=("CEREBRAS_API_KEY",),
-    ),
-    "openrouter": ProviderSpec(
-        key="openrouter",
-        label="OpenRouter free and paid model router",
-        model="nvidia/nemotron-3-ultra-550b-a55b:free",
-        base_url="https://openrouter.ai/api/v1",
-        api_key_env=("OPENROUTER_API_KEY",),
-    ),
-    "gemini": ProviderSpec(
-        key="gemini",
-        label="Google Gemini OpenAI compatible endpoint",
-        model="gemini-2.5-flash",
-        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
-        api_key_env=("GEMINI_API_KEY",),
     ),
 }
 

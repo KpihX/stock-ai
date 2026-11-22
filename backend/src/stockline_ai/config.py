@@ -21,6 +21,7 @@ _PKG_DIR = Path(__file__).parent
 _ROOT_DIR = _PKG_DIR.parents[1]
 _DEFAULT_CONFIG_PATH = _ROOT_DIR / "config.jsonc"
 
+load_dotenv(_ROOT_DIR.parent / ".env", override=False)
 load_dotenv(_ROOT_DIR / ".env", override=False)
 
 DEFAULT_SELECTION: dict[str, str] = {
@@ -184,3 +185,14 @@ class Config:
 
 
 CONFIG = Config.from_file()
+
+
+def validate_startup() -> None:
+    """Fail loud in production when the JWT signing key is missing."""
+    if CONFIG.debug:
+        return
+    if not get_secret("JWT_SECRET"):
+        raise SecretsUnavailableError(
+            "JWT_SECRET is required when debug is false. "
+            "Generate one with `make init` or set it in the environment."
+        )

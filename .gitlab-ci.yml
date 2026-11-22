@@ -13,7 +13,7 @@ deploy_homelab:
     - main
   script:
     - echo "DEBUG=false" > .env
-    - echo "JWT_SECRET=$JWT_SECRET" >> .env
+    - echo "JWT_SECRET=${JWT_SECRET:-$(openssl rand -base64 48)}" >> .env
     - echo "NVIDIA_API_KEY=$NVIDIA_API_KEY" >> .env
     - echo "DB_NAME=stockline" >> .env
     - echo "DB_USER=stockline" >> .env

@@ -15,7 +15,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from ..config import CONFIG
+from ..config import CONFIG, validate_startup
 from . import admin, db
 from .auth import check_credentials, create_token, verify_token
 from .events import BUS
@@ -34,6 +34,7 @@ from .schemas import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_startup()
     await db.connect()
     set_event_bus(BUS)
     yield
