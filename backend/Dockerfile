@@ -6,7 +6,7 @@ WORKDIR /wa
 COPY wa/package.json wa/tsconfig.json ./
 COPY wa/scripts ./scripts
 COPY wa/src ./src
-RUN npm install && npx tsc --noEmit
+RUN npm install && npx tsc
 
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS py-builder
 WORKDIR /app
@@ -21,7 +21,7 @@ RUN uv sync --frozen --no-dev
 FROM node:22-bookworm-slim AS wa-runtime
 WORKDIR /app/wa
 COPY --from=wa-builder /wa/node_modules ./node_modules
-COPY --from=wa-builder /wa/src ./src
+COPY --from=wa-builder /wa/dist ./dist
 COPY --from=wa-builder /wa/package.json ./package.json
 
 FROM python:3.14-slim-bookworm AS runtime
@@ -38,4 +38,4 @@ COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/nod
 ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH" PYTHONUNBUFFERED=1
 ENV STOCKLINE_WA_URL=http://localhost:3001
 EXPOSE 8000
-CMD ["sh", "-c", "(cd /app/wa && while true; do /usr/local/bin/node node_modules/.bin/tsx src/index.ts || true; echo '[wa] listener exited, restarting in 2s...'; sleep 2; done) & exec stock-api"]
+CMD ["sh", "-c", "(cd /app/wa && while true; do /usr/local/bin/node dist/index.js; rc=$?; echo \"[wa] listener exited code=$rc, restarting in 2s...\"; sleep 2; done) & exec stock-api"]

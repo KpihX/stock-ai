@@ -1011,7 +1011,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             video: false,
           });
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Microphone prompt timed out")), 4500),
+            setTimeout(() => reject(new Error("Microphone prompt timed out")), 3000),
           );
           stream = await Promise.race([micPromise, timeoutPromise]);
         } catch {
@@ -1058,7 +1058,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             resolve();
             return;
           }
-          const timer = setTimeout(resolve, 2500);
+          const timer = setTimeout(resolve, 800);
           const onChange = () => {
             if (pc.iceGatheringState === "complete") {
               clearTimeout(timer);
@@ -1079,6 +1079,13 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         showToast("WebRTC Opus call connected");
       } catch (err) {
         closeWebRtcPeer();
+        void api
+          .getActiveCalls()
+          .then((r) => {
+            setRecentCalls(r.recent || []);
+            setActiveCall(r.items?.[0] || null);
+          })
+          .catch(() => {});
         showToast(
           err instanceof Error ? err.message : "Failed to answer call",
           true,

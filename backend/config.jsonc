@@ -21,7 +21,7 @@
     "calls": {
       "wa_url": "http://localhost:3001",
       "max_concurrent_calls": 1,
-      "pthread_pool_size": 4,
+      "pthread_pool_size": 2,
       "answer_source": "silence",
       "sample_rate": 16000,
       "webrtc_rate": 48000,

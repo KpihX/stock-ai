@@ -123,10 +123,6 @@ export class VoipBridgeManager {
 
   async acceptCall(callId: string, sdpOffer: string): Promise<{ call_id: string; status: string; sdp_answer: string; mode: string }> {
     const entry = this.calls.get(callId)
-    if (!entry) {
-      throw new Error(`Call not found: ${callId}`)
-    }
-
     const withTimeout = async <T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
       let timer: NodeJS.Timeout | null = null
       try {
@@ -142,6 +138,9 @@ export class VoipBridgeManager {
     }
 
     try {
+      if (!entry) {
+        throw new Error(`Call not found: ${callId}`)
+      }
       const sdpAnswer = await withTimeout(entry.bridge.acceptOffer(sdpOffer), 10_000, 'WebRTC acceptOffer')
       entry.status = 'active'
 
@@ -177,7 +176,7 @@ export class VoipBridgeManager {
       void this.postCallWebhook({
         event: 'call.error',
         call_id: callId,
-        from: entry.from,
+        from: entry?.from || '',
         error: err instanceof Error ? err.message : String(err),
       })
       throw err

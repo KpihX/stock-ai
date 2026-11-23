@@ -166,12 +166,53 @@ async def _safe_commit_call_order(call_id: str) -> None:
         )
 
 
+def _extract_wa_error(resp: httpx.Response) -> str:
+    try:
+        body = resp.json()
+        if isinstance(body, dict) and body.get("error"):
+            return sanitize_error(str(body["error"]))
+    except Exception:
+        pass
+    return sanitize_error(resp.text[:300] or f"HTTP {resp.status_code}")
+
+
+async def _end_stale_call(call_id: str, reason: str = "listener_restarted") -> None:
+    record = _calls.get(call_id)
+    if not record or record.get("status") not in {"ringing", "active"}:
+        return
+    record["status"] = "ended"
+    record["ended_at"] = datetime.now(UTC).isoformat()
+    record["reason"] = reason
+    await _persist_call(record)
+    await publish(
+        {
+            "type": "call.ended",
+            "node": "intake.call",
+            "call_id": call_id,
+            "phone_number": record.get("phone_number", ""),
+            "client_id": record.get("client_id", ""),
+            "client_name": record.get("client_name", ""),
+            "status": "ended",
+            "reason": reason,
+            "stats": record.get("stats", {}),
+            "message": f"Call {call_id} ended ({reason})",
+        }
+    )
+
+
 @router.post("/webhooks/call")
 async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     """Receive call lifecycle events and VAD audio utterances from the WA VoIP listener."""
     event = str(payload.get("event", "")).strip()
     call_id = str(payload.get("call_id", "")).strip()
     phone = _digits(str(payload.get("from", "")))
+    if event == "wa.boot":
+        stale_ids = [
+            cid for cid, rec in _calls.items() if rec.get("status") in {"ringing", "active"}
+        ]
+        for cid in stale_ids:
+            await _end_stale_call(cid, "listener_restarted")
+        return {"status": "ok", "cleared": len(stale_ids)}
     if not call_id:
         raise HTTPException(status_code=400, detail="call_id required")
 
@@ -479,8 +520,19 @@ async def accept_call(
                 _wa_calls_url("/call/accept"),
                 json={"call_id": call_id, "sdp_offer": payload.sdp_offer},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                err_msg = _extract_wa_error(resp)
+                if (
+                    resp.status_code == 404
+                    or "not found" in err_msg.lower()
+                    or "already ended" in err_msg.lower()
+                ):
+                    await _end_stale_call(call_id, "expired_or_not_found")
+                    raise HTTPException(status_code=409, detail=f"Call unavailable: {err_msg}")
+                raise HTTPException(status_code=502, detail=f"Call accept failed: {err_msg}")
             data = dict(resp.json())
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Call accept failed: {sanitize_error(exc)}"
@@ -503,8 +555,13 @@ async def reject_call(
                 _wa_calls_url("/call/reject"),
                 json={"call_id": call_id, "reason": reason},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502, detail=f"Call reject failed: {_extract_wa_error(resp)}"
+                )
             data = dict(resp.json())
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Call reject failed: {sanitize_error(exc)}"
@@ -526,8 +583,13 @@ async def hangup_call(
                 _wa_calls_url("/call/hangup"),
                 json={"call_id": call_id, "reason": reason},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502, detail=f"Call hangup failed: {_extract_wa_error(resp)}"
+                )
             data = dict(resp.json())
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Call hangup failed: {sanitize_error(exc)}"
@@ -549,8 +611,13 @@ async def mute_call(
                 _wa_calls_url("/call/mute"),
                 json={"call_id": call_id, "muted": payload.muted},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502, detail=f"Call mute failed: {_extract_wa_error(resp)}"
+                )
             data = dict(resp.json())
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Call mute failed: {sanitize_error(exc)}"
@@ -594,8 +661,13 @@ async def simulate_call(
                 _wa_calls_url("/call/simulate"),
                 json={"from": _digits(payload.phone), "wav_base64": wav_b64, "call_id": call_id},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502, detail=f"Simulation failed: {_extract_wa_error(resp)}"
+                )
             return dict(resp.json())
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Simulation failed: {sanitize_error(exc)}"
@@ -622,8 +694,13 @@ async def inject_call_text(
                 _wa_calls_url("/call/inject-audio"),
                 json={"call_id": call_id, "wav_base64": wav_b64, "speaker": speaker},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=502, detail=f"Inject audio failed: {_extract_wa_error(resp)}"
+                )
             return dict(resp.json())
+    except HTTPException:
+        raise
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Inject audio failed: {sanitize_error(exc)}"

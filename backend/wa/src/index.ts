@@ -512,8 +512,9 @@ const server = createServer(async (request, response) => {
       const result = await voipManager.acceptCall(String(body.call_id || ''), String(body.sdp_offer || ''))
       sendJson(response, 200, result)
     } catch (error) {
-      console.error('[wa] /call/accept failed', error)
-      sendJson(response, 400, { error: String(error) })
+      const msg = error instanceof Error ? error.message : String(error)
+      console.error('[wa] /call/accept failed', msg)
+      sendJson(response, msg.includes('Call not found') ? 404 : 400, { error: msg })
     }
     return
   }
@@ -589,5 +590,11 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[wa] ack API listening on ${PORT}`)
+  void fetch(`${API_URL}/webhooks/call`, {
+    method: 'POST',
+    signal: AbortSignal.timeout(5000),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'wa.boot', call_id: '__boot__' }),
+  }).catch(() => {})
   void connect()
 })

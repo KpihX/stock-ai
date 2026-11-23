@@ -230,3 +230,43 @@ def test_bidirectional_call_dialogue_includes_manager_and_client() -> None:
     assert len(err_events) == 1
     assert "nvapi-secret123" not in err_events[0]["error"]
     calls._calls.clear()
+
+
+def test_wa_boot_clears_stale_calls_and_extracts_error() -> None:
+    import httpx
+
+    calls._calls.clear()
+    published_events: list[dict] = []
+
+    async def fake_publish(event):  # type: ignore[no-untyped-def]
+        published_events.append(dict(event))
+
+    async def _run() -> None:
+        with (
+            patch(
+                "stockline_ai.api.calls.db.fetch_client_by_phone",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("stockline_ai.api.calls.db.upsert_call_session", new=AsyncMock()),
+            patch("stockline_ai.api.calls.publish", side_effect=fake_publish),
+        ):
+            await calls.call_webhook(
+                {"event": "call.incoming", "call_id": "STALE1", "from": "23793113271"}
+            )
+            assert calls._calls["STALE1"]["status"] == "ringing"
+
+            res = await calls.call_webhook({"event": "wa.boot", "call_id": "__boot__"})
+            assert res["cleared"] == 1
+            assert calls._calls["STALE1"]["status"] == "ended"
+            assert calls._calls["STALE1"]["reason"] == "listener_restarted"
+            assert published_events[-1]["type"] == "call.ended"
+
+    asyncio.run(_run())
+    resp = httpx.Response(
+        404,
+        json={"error": "Call not found: STALE1 Bearer nvapi-secret999"},
+    )
+    msg = calls._extract_wa_error(resp)
+    assert "Call not found: STALE1" in msg
+    assert "nvapi-secret999" not in msg
+    calls._calls.clear()
