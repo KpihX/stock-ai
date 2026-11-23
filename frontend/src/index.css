@@ -92,6 +92,53 @@ code, pre, .mono { font-family: var(--font-mono); font-size: 12.5px; }
   display: grid;
   gap: 16px;
 }
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.brand-icon {
+  display: block;
+  border-radius: 8px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(6, 104, 57, 0.22);
+}
+.login-icon {
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(6, 104, 57, 0.24);
+}
+.brand-wordmark {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.brand-ai-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, #066839, #16a34a);
+  color: #f0fdf4;
+  border: 1px solid rgba(52, 211, 153, 0.45);
+  line-height: 1.25;
+}
+.login-brand-lockup {
+  display: grid;
+  gap: 12px;
+}
+.login-brand-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
 .login-logo, .brand-mark {
   width: 28px;
   height: 28px;
@@ -113,7 +160,7 @@ code, pre, .mono { font-family: var(--font-mono); font-size: 12.5px; }
   color: var(--ink);
   letter-spacing: -0.02em;
 }
-.login-subtitle { color: var(--ink-muted); font-size: 14px; margin-top: -8px; }
+.login-subtitle { color: var(--ink-muted); font-size: 14px; margin-top: -6px; }
 .field, label { display: grid; gap: 6px; font-size: 13px; font-weight: 500; color: var(--ink-muted); }
 .stack { display: grid; gap: 14px; }
 input, select {

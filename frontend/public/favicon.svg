@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Stockline deep emerald container -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="#066839" />
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="none" stroke="#1E8E5A" stroke-width="1.5" />
+
+  <!-- Subtle shadow under S and bar -->
+  <path
+    d="M 38.2 21.0 C 36.3 18.6 33.4 17.4 29.8 17.4 C 24.5 17.4 21.1 20.2 21.1 24.3 C 21.1 28.7 24.8 30.6 30.2 32.0 C 35.9 33.5 39.6 35.4 39.6 40.2 C 39.6 44.8 35.6 47.8 29.6 47.8 C 25.3 47.8 21.9 46.2 19.9 43.4"
+    fill="none"
+    stroke="#034224"
+    stroke-width="6.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <rect x="19" y="51.6" width="23" height="5.4" rx="2.7" fill="#034224" />
+
+  <!-- Signature Stockline rounded white S -->
+  <path
+    d="M 38.2 19.2 C 36.3 16.8 33.4 15.6 29.8 15.6 C 24.5 15.6 21.1 18.4 21.1 22.5 C 21.1 26.9 24.8 28.8 30.2 30.2 C 35.9 31.7 39.6 33.6 39.6 38.4 C 39.6 43.0 35.6 46.0 29.6 46.0 C 25.3 46.0 21.9 44.4 19.9 41.6"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="6.4"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Signature Stockline mint underline bar -->
+  <rect x="19" y="49.8" width="23" height="5.4" rx="2.7" fill="#22D366" />
+
+  <!-- AI touch: crisp 4-point neural spark + micro node -->
+  <path
+    d="M 49.5 6.5 L 51.5 12.5 L 57.5 14.5 L 51.5 16.5 L 49.5 22.5 L 47.5 16.5 L 41.5 14.5 L 47.5 12.5 Z"
+    fill="#A7F3D0"
+  />
+  <circle cx="54.5" cy="23.2" r="2" fill="#34D399" />
+</svg>

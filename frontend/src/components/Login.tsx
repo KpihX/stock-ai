@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { api, setToken } from "../api";
+import BrandLogo from "./BrandLogo";
 
 interface LoginProps {
   onLogin: (token: string) => void;
@@ -29,9 +30,8 @@ export default function Login({ onLogin }: LoginProps) {
   return (
     <div className="login-screen">
       <form className="login-card" onSubmit={handleSubmit}>
-        <div className="login-logo">S</div>
-        <h1 className="login-brand">Stockline</h1>
-        <p className="login-subtitle">Admin dashboard</p>
+        <BrandLogo size={44} variant="login" />
+        <p className="login-subtitle">AI-native ERP &amp; WhatsApp order intake</p>
 
         <label className="field">
           <span>Username</span>

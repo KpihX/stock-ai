@@ -28,17 +28,24 @@ deploy_homelab:
     - docker rm -f stockline-api || true
     - docker compose -p stockline-ai up -d --build --remove-orphans
     - |
-      for attempt in $(seq 1 30); do
+      for attempt in $(seq 1 45); do
         status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' stockline-api 2>/dev/null || true)"
         if [ "$status" = "healthy" ]; then
           break
         fi
         if [ "$status" = "unhealthy" ]; then
-          docker logs --tail 100 stockline-api
+          docker ps -a --filter name=stockline
+          docker logs --tail 120 stockline-api
           exit 1
         fi
         sleep 2
       done
-    - docker inspect --format '{{.State.Health.Status}}' stockline-api | grep -qx healthy
+    - |
+      if ! docker inspect --format '{{.State.Health.Status}}' stockline-api | grep -qx healthy; then
+        docker ps -a --filter name=stockline
+        docker logs --tail 120 stockline-api
+        exit 1
+      fi
     - docker exec stockline-api curl -fsS http://127.0.0.1:8000/health
+    - docker logs --tail 25 stockline-api
     - docker image prune -f || true

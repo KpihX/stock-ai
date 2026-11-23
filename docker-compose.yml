@@ -48,10 +48,10 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
-      interval: 20s
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 10
+      start_period: 10s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.stockline.rule=Host(`stockline-ai.kpihx-labs.com`)"

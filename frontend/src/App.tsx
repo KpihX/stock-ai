@@ -21,6 +21,7 @@ import type {
 } from "./types";
 import Login from "./components/Login";
 import CallPanel from "./components/CallPanel";
+import BrandLogo from "./components/BrandLogo";
 
 type PageId =
   | "dashboard"
@@ -1459,8 +1460,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
               type="button"
               onClick={() => setPage("dashboard")}
             >
-              <span className="brand-mark">S</span>
-              <span>Stockline</span>
+              <BrandLogo size={30} />
             </button>
             <nav className="header-nav" aria-label="Primary navigation">
               {(
