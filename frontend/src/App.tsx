@@ -467,6 +467,20 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   const [editingManager, setEditingManager] = useState<string | null>(null);
   const [mgrForm, setMgrForm] = useState({ username: "", password: "" });
 
+  const [editingCommandId, setEditingCommandId] = useState<string | null>(null);
+  const [cmdEditForm, setCmdEditForm] = useState({
+    quantity: "",
+    status: "new",
+    summary: "",
+  });
+  const [newCmdOpen, setNewCmdOpen] = useState(false);
+  const [newCmdForm, setNewCmdForm] = useState({
+    client_id: "",
+    product_id: "",
+    quantity: "1",
+    summary: "",
+  });
+
   const [selectedNodeId, setSelectedNodeId] = useState("llm.nemotron");
   const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
   const [filterByNode, setFilterByNode] = useState(false);
@@ -722,6 +736,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             "command.modified",
             "command.cancelled",
             "command.decided",
+            "command.deleted",
           ].includes(item.event_type)
         ) {
           void Promise.all([
@@ -743,7 +758,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                   c.command_id === item.command_id ||
                   c.command_id.startsWith(`${item.command_id}-`),
               ) || cmds[0];
-            if (targetCmd && item.event_type !== "command.decided") {
+            if (
+              targetCmd &&
+              item.event_type !== "command.decided" &&
+              item.event_type !== "command.deleted"
+            ) {
               const cid = targetCmd.command_id || targetCmd.id || "";
               setFlashCommandId(cid);
               const badge =
@@ -771,22 +790,41 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             }
           });
         }
+        if (item.event_type === "product.updated") {
+          void api.getProducts().then(setProducts).catch(() => {});
+        }
+        if (item.event_type === "client.updated") {
+          void api.getClients().then(setClients).catch(() => {});
+        }
+        if (item.event_type === "manager.updated" && role === "admin") {
+          void api.getManagers().then(setManagers).catch(() => {});
+        }
+        if (item.event_type === "whatsapp.updated") {
+          void refreshWa(role);
+        }
       } catch {
         // ignore malformed event
       }
     };
     return () => source.close();
-  }, []);
+  }, [refreshWa, role]);
 
   useEffect(() => {
     const t = setInterval(async () => {
       try {
-        const [cmds, pipe, callState] = await Promise.all([
+        const [cmds, pipe, clis, prods, callState] = await Promise.all([
           api.getCommands(),
           api.getPipelineLogs(120),
+          api.getClients(),
+          api.getProducts(),
           api.getActiveCalls().catch(() => null),
         ]);
         setLogs(pipe);
+        setClients(clis);
+        setProducts(prods);
+        if (role === "admin") {
+          void api.getManagers().then(setManagers).catch(() => {});
+        }
         if (callState) {
           setRecentCalls(callState.recent || []);
           const liveCall = callState.items?.[0] || null;
@@ -853,9 +891,9 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       } catch {
         // silent background poll
       }
-    }, 2500);
+    }, 3000);
     return () => clearInterval(t);
-  }, []);
+  }, [role]);
 
   useEffect(() => {
     if (role !== "admin") return;
@@ -1054,16 +1092,30 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
   const simulateIncomingCall = useCallback(
     async (phone: string, text: string) => {
-      const res = await api.simulateCall(phone, text);
-      showToast(`Simulated WhatsApp call ${res.call_id} ringing`);
+      try {
+        const res = await api.simulateCall(phone, text);
+        showToast(`Simulated WhatsApp call ${res.call_id} ringing`);
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Failed to simulate call",
+          true,
+        );
+      }
     },
     [showToast],
   );
 
   const injectCallText = useCallback(
     async (callId: string, text: string) => {
-      await api.injectCallText(callId, text);
-      showToast("Injected spoken phrase into active WebRTC call");
+      try {
+        await api.injectCallText(callId, text);
+        showToast("Injected spoken phrase into active WebRTC call");
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Failed to inject speech",
+          true,
+        );
+      }
     },
     [showToast],
   );
@@ -1146,6 +1198,62 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       showToast("Client saved");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Save failed", true);
+    }
+  }
+
+  async function submitNewCommand(e: FormEvent) {
+    e.preventDefault();
+    const clientId = newCmdForm.client_id || clients[0]?.client_id || "";
+    const productId = newCmdForm.product_id || products[0]?.product_id || "";
+    if (!clientId || !productId) {
+      showToast("Add at least one client and one product first", true);
+      return;
+    }
+    try {
+      await api.createCommand({
+        client_id: clientId,
+        product_id: productId,
+        quantity: Number(newCmdForm.quantity),
+        summary: newCmdForm.summary.trim(),
+      });
+      setNewCmdOpen(false);
+      setNewCmdForm({ client_id: "", product_id: "", quantity: "1", summary: "" });
+      await loadAll();
+      showToast("Command created");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Create failed", true);
+    }
+  }
+
+  async function saveCommandEdit(commandId: string) {
+    setBusyId(commandId);
+    try {
+      await api.updateCommand(commandId, {
+        quantity: Number(cmdEditForm.quantity),
+        status: cmdEditForm.status,
+        summary: cmdEditForm.summary.trim(),
+      });
+      setEditingCommandId(null);
+      await loadAll();
+      showToast(`Updated ${commandId}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Update failed", true);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function deleteCommand(commandId: string) {
+    setBusyId(commandId);
+    try {
+      await api.deleteCommand(commandId);
+      if (editingCommandId === commandId) setEditingCommandId(null);
+      await loadAll();
+      showToast(`Deleted ${commandId}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Delete failed", true);
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -1306,7 +1414,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       ? "Connected"
       : wa.status === "qr_pending"
         ? "Waiting scan"
-        : "Active";
+        : wa.status === "connecting"
+          ? "Connecting..."
+          : wa.status === "disconnected"
+            ? "Disconnected"
+            : "WA Offline";
 
   const pageMeta: Record<PageId, [string, string]> = {
     dashboard: [
@@ -1401,7 +1513,60 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 </td>
                 {!compact && <td>{dateLabel(cmd.recorded_at)}</td>}
                 <td>
-                  {st === "new" ? (
+                  {editingCommandId === id ? (
+                    <div className="decision-cell">
+                      <div className="row-actions">
+                        <input
+                          className="decision-input"
+                          type="number"
+                          step="0.001"
+                          min="0.001"
+                          style={{ width: 82 }}
+                          value={cmdEditForm.quantity}
+                          onChange={(e) =>
+                            setCmdEditForm((f) => ({ ...f, quantity: e.target.value }))
+                          }
+                        />
+                        <select
+                          className="decision-input"
+                          value={cmdEditForm.status}
+                          onChange={(e) =>
+                            setCmdEditForm((f) => ({ ...f, status: e.target.value }))
+                          }
+                        >
+                          <option value="new">new</option>
+                          <option value="processed">approved</option>
+                          <option value="rejected">rejected</option>
+                          <option value="cancelled">cancelled</option>
+                        </select>
+                      </div>
+                      <input
+                        className="decision-input"
+                        placeholder="Summary..."
+                        value={cmdEditForm.summary}
+                        onChange={(e) =>
+                          setCmdEditForm((f) => ({ ...f, summary: e.target.value }))
+                        }
+                      />
+                      <div className="row-actions">
+                        <button
+                          className="btn small primary"
+                          type="button"
+                          disabled={busyId === id}
+                          onClick={() => void saveCommandEdit(id)}
+                        >
+                          Save
+                        </button>
+                        <button
+                          className="btn small ghost"
+                          type="button"
+                          onClick={() => setEditingCommandId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : st === "new" ? (
                     <div className="decision-cell">
                       <input
                         className="decision-input"
@@ -1431,15 +1596,69 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                         >
                           Reject
                         </button>
+                        {!compact && (
+                          <>
+                            <button
+                              className="btn ghost small"
+                              type="button"
+                              onClick={() => {
+                                setEditingCommandId(id);
+                                setCmdEditForm({
+                                  quantity: String(cmd.quantity),
+                                  status: String(cmd.status || "new"),
+                                  summary: String(cmd.summary || ""),
+                                });
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn ghost small reject"
+                              type="button"
+                              disabled={busyId === id}
+                              onClick={() => void deleteCommand(id)}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
                       </div>
                     </div>
                   ) : (
-                    <span className="sub">
-                      {cmd.decision_comment
-                        ? `“${cmd.decision_comment}”`
-                        : "No comment"}{" "}
-                      {cmd.decided_by ? `by ${cmd.decided_by}` : ""}
-                    </span>
+                    <div className="decision-cell">
+                      <span className="sub">
+                        {cmd.decision_comment
+                          ? `“${cmd.decision_comment}”`
+                          : "No comment"}{" "}
+                        {cmd.decided_by ? `by ${cmd.decided_by}` : ""}
+                      </span>
+                      {!compact && (
+                        <div className="row-actions">
+                          <button
+                            className="btn ghost small"
+                            type="button"
+                            onClick={() => {
+                              setEditingCommandId(id);
+                              setCmdEditForm({
+                                quantity: String(cmd.quantity),
+                                status: String(cmd.status || "new"),
+                                summary: String(cmd.summary || ""),
+                              });
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="btn ghost small reject"
+                            type="button"
+                            disabled={busyId === id}
+                            onClick={() => void deleteCommand(id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </td>
               </tr>
@@ -1492,7 +1711,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             {role === "admin" && (
               <button
                 type="button"
-                className={`pill status-link ${wa.status === "connected" ? "ok" : wa.status === "qr_pending" ? "warn" : "bad"}`}
+                className={`pill status-link ${wa.status === "connected" ? "ok" : wa.status === "qr_pending" || wa.status === "connecting" ? "warn" : "bad"}`}
                 onClick={() => setPage("settings")}
               >
                 <span className="dot" />
@@ -1636,20 +1855,26 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                   </button>
                 </div>
                 <div className="activity-list">
-                  {logs.slice(0, 10).map((item) => (
-                    <div key={item.log_id} className="activity-item">
-                      <div className="activity-head">
-                        <span className="mono">{item.event_type}</span>
-                        <span
-                          className={`pill ${statusPillClass(item.status)}`}
-                        >
-                          {statusLabel(item.status)}
-                        </span>
+                  {logs.length === 0 ? (
+                    <p className="empty">
+                      No pipeline events yet. Send a WhatsApp order or run a live call test to watch events stream in real time.
+                    </p>
+                  ) : (
+                    logs.slice(0, 10).map((item) => (
+                      <div key={item.log_id} className="activity-item">
+                        <div className="activity-head">
+                          <span className="mono">{item.event_type}</span>
+                          <span
+                            className={`pill ${statusPillClass(item.status)}`}
+                          >
+                            {statusLabel(item.status)}
+                          </span>
+                        </div>
+                        <div className="activity-body">{item.message}</div>
+                        <span className="sub">{dateLabel(item.created_at)}</span>
                       </div>
-                      <div className="activity-body">{item.message}</div>
-                      <span className="sub">{dateLabel(item.created_at)}</span>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -1686,6 +1911,13 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 <option value="returning">Returning client</option>
               </select>
               <button
+                className="btn primary"
+                type="button"
+                onClick={() => setNewCmdOpen((o) => !o)}
+              >
+                {newCmdOpen ? "Close form" : "+ New order"}
+              </button>
+              <button
                 className="btn ghost"
                 type="button"
                 onClick={() => void loadAll()}
@@ -1693,6 +1925,64 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 Refresh
               </button>
             </div>
+            {newCmdOpen && (
+              <div className="panel" style={{ marginBottom: 16 }}>
+                <div className="panel-head">
+                  <h2>Create manual order</h2>
+                </div>
+                <form className="toolbar" onSubmit={(e) => void submitNewCommand(e)}>
+                  <select
+                    className="input"
+                    value={newCmdForm.client_id || clients[0]?.client_id || ""}
+                    onChange={(e) =>
+                      setNewCmdForm((f) => ({ ...f, client_id: e.target.value }))
+                    }
+                  >
+                    {clients.map((c) => (
+                      <option key={c.client_id} value={c.client_id}>
+                        {c.client_name} ({c.phone_number})
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input"
+                    value={newCmdForm.product_id || products[0]?.product_id || ""}
+                    onChange={(e) =>
+                      setNewCmdForm((f) => ({ ...f, product_id: e.target.value }))
+                    }
+                  >
+                    {products.map((p) => (
+                      <option key={p.product_id} value={p.product_id}>
+                        {p.product_name || p.product_id} ({money(p.price)} €)
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="input narrow"
+                    type="number"
+                    step="0.001"
+                    min="0.001"
+                    value={newCmdForm.quantity}
+                    onChange={(e) =>
+                      setNewCmdForm((f) => ({ ...f, quantity: e.target.value }))
+                    }
+                    placeholder="Qty"
+                    required
+                  />
+                  <input
+                    className="input"
+                    value={newCmdForm.summary}
+                    onChange={(e) =>
+                      setNewCmdForm((f) => ({ ...f, summary: e.target.value }))
+                    }
+                    placeholder="Optional note..."
+                  />
+                  <button className="btn primary" type="submit">
+                    Create order
+                  </button>
+                </form>
+              </div>
+            )}
             <div className="panel table-wrap">
               {renderCommandTable(filteredCommands, false)}
             </div>
@@ -1760,9 +2050,21 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                                   className="btn ghost small reject"
                                   type="button"
                                   onClick={async () => {
-                                    await api.deleteProduct(p.product_id);
-                                    setProducts(await api.getProducts());
-                                    showToast(`Deleted ${p.product_id}`);
+                                    try {
+                                      await api.deleteProduct(p.product_id);
+                                      const [prods, cmds] = await Promise.all([
+                                        api.getProducts(),
+                                        api.getCommands(),
+                                      ]);
+                                      setProducts(prods);
+                                      setCommands(cmds);
+                                      showToast(`Deleted ${p.product_id}`);
+                                    } catch (err) {
+                                      showToast(
+                                        err instanceof Error ? err.message : "Delete failed",
+                                        true,
+                                      );
+                                    }
                                   }}
                                 >
                                   Delete
@@ -1943,13 +2245,25 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                                     className="btn ghost small reject"
                                     type="button"
                                     onClick={async () => {
-                                      await api.deleteClient(c.client_id);
-                                      if (selectedClientId === c.client_id) {
-                                        setSelectedClientId(null);
-                                        setClientDetail(null);
+                                      try {
+                                        await api.deleteClient(c.client_id);
+                                        if (selectedClientId === c.client_id) {
+                                          setSelectedClientId(null);
+                                          setClientDetail(null);
+                                        }
+                                        const [clis, cmds] = await Promise.all([
+                                          api.getClients(),
+                                          api.getCommands(),
+                                        ]);
+                                        setClients(clis);
+                                        setCommands(cmds);
+                                        showToast(`Deleted ${c.client_id}`);
+                                      } catch (err) {
+                                        showToast(
+                                          err instanceof Error ? err.message : "Delete failed",
+                                          true,
+                                        );
                                       }
-                                      setClients(await api.getClients());
-                                      showToast(`Deleted ${c.client_id}`);
                                     }}
                                   >
                                     Delete
@@ -2486,9 +2800,19 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                     className="btn primary"
                     type="button"
                     onClick={async () => {
-                      await api.waConnect();
-                      showToast("QR refresh requested");
-                      setTimeout(() => void refreshWa("admin"), 1200);
+                      try {
+                        const shouldReset = wa.status !== "connected";
+                        await api.waConnect(shouldReset);
+                        showToast("QR refresh requested");
+                        for (const delay of [800, 2000, 4000, 7000]) {
+                          setTimeout(() => void refreshWa("admin"), delay);
+                        }
+                      } catch (err) {
+                        showToast(
+                          err instanceof Error ? err.message : "QR request failed",
+                          true,
+                        );
+                      }
                     }}
                   >
                     Generate / refresh QR
@@ -2497,9 +2821,18 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                     className="btn ghost"
                     type="button"
                     onClick={async () => {
-                      await api.waDisconnect();
-                      showToast("WhatsApp disconnected");
-                      void refreshWa("admin");
+                      try {
+                        await api.waDisconnect();
+                        setQrDataUrl("");
+                        setWa({ status: "disconnected", phone: "", qr_ready: false });
+                        showToast("WhatsApp disconnected");
+                        void refreshWa("admin");
+                      } catch (err) {
+                        showToast(
+                          err instanceof Error ? err.message : "Disconnect failed",
+                          true,
+                        );
+                      }
                     }}
                   >
                     Disconnect
@@ -2595,13 +2928,20 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                                   className="btn ghost small"
                                   type="button"
                                   onClick={async () => {
-                                    await api.updateManager(m.username, {
-                                      is_active: !m.is_active,
-                                    });
-                                    setManagers(await api.getManagers());
-                                    showToast(
-                                      `${m.username} ${!m.is_active ? "enabled" : "disabled"}`,
-                                    );
+                                    try {
+                                      await api.updateManager(m.username, {
+                                        is_active: !m.is_active,
+                                      });
+                                      setManagers(await api.getManagers());
+                                      showToast(
+                                        `${m.username} ${!m.is_active ? "enabled" : "disabled"}`,
+                                      );
+                                    } catch (err) {
+                                      showToast(
+                                        err instanceof Error ? err.message : "Update failed",
+                                        true,
+                                      );
+                                    }
                                   }}
                                 >
                                   {m.is_active ? "Disable" : "Enable"}
@@ -2610,9 +2950,16 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                                   className="btn ghost small reject"
                                   type="button"
                                   onClick={async () => {
-                                    await api.deleteManager(m.username);
-                                    setManagers(await api.getManagers());
-                                    showToast(`Deleted ${m.username}`);
+                                    try {
+                                      await api.deleteManager(m.username);
+                                      setManagers(await api.getManagers());
+                                      showToast(`Deleted ${m.username}`);
+                                    } catch (err) {
+                                      showToast(
+                                        err instanceof Error ? err.message : "Delete failed",
+                                        true,
+                                      );
+                                    }
                                   }}
                                 >
                                   Delete

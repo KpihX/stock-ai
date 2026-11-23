@@ -12,7 +12,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   type AnyMessageContent,
@@ -128,7 +128,27 @@ interface SendRequest {
 let sock: ReturnType<typeof makeWASocket> | null = null
 let currentQr: { dataUrl: string; at: number } | null = null
 let status = 'disconnected'
+let manualDisconnect = false
+let reconnectTimer: NodeJS.Timeout | null = null
 const seenMessageIds = new Set<string>()
+
+process.on('uncaughtException', (err) => {
+  console.error('[wa] uncaughtException:', err)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('[wa] unhandledRejection:', reason)
+})
+
+function clearAuthFiles(): void {
+  if (!existsSync(STATE_DIR)) return
+  for (const name of readdirSync(STATE_DIR)) {
+    try {
+      rmSync(join(STATE_DIR, name), { recursive: true, force: true })
+    } catch (err) {
+      console.warn('[wa] failed to remove auth file', name, err)
+    }
+  }
+}
 
 function canonicalPhone(value: string): string {
   const userPart = value.split('@')[0].split(':')[0]
@@ -153,6 +173,19 @@ function resolvePhoneFromJid(jid: string): string {
     return lid
   }
   return canonicalPhone(jid)
+}
+
+async function resolvePhoneFromJidAsync(jid: string): Promise<string> {
+  if (!jid) return ''
+  if (jid.endsWith('@lid')) {
+    try {
+      const pn = await (sock as any)?.signalRepository?.lidMapping?.getPNForLID?.(jid)
+      if (typeof pn === 'string' && pn.trim()) {
+        return canonicalPhone(pn)
+      }
+    } catch {}
+  }
+  return resolvePhoneFromJid(jid)
 }
 
 function resolveSenderPhone(key: any): string {
@@ -239,10 +272,21 @@ async function connect(): Promise<void> {
         .catch((error: unknown) => console.error('[wa] QR render failed', error))
     }
     if (connection === 'close') {
+      if (sock === activeSock) sock = null
       status = 'disconnected'
       currentQr = null
       const code = (lastDisconnect?.error as Boom)?.output?.statusCode
-      if (code !== DisconnectReason.loggedOut) void connect()
+      console.warn(`[wa] connection closed code=${code ?? 'unknown'} manual=${manualDisconnect}`)
+      if (code === DisconnectReason.loggedOut) {
+        clearAuthFiles()
+        return
+      }
+      if (!manualDisconnect && !reconnectTimer) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          if (!manualDisconnect) void connect()
+        }, 3000)
+      }
     }
     if (connection === 'open') {
       status = 'connected'
@@ -272,7 +316,9 @@ async function connect(): Promise<void> {
       if (!jid || jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid === 'status@broadcast') {
         continue
       }
-      const cNumber = resolveSenderPhone(message.key)
+      const cNumber = await resolvePhoneFromJidAsync(
+        String(message.key?.remoteJidAlt || message.key?.senderPn || message.key?.remoteJid || '')
+      )
       if (!cNumber) continue
       if (PHONE && cNumber !== canonicalPhone(PHONE)) continue
       const { text, modality } = extract(message.message)
@@ -347,15 +393,46 @@ const server = createServer(async (request, response) => {
     return
   }
   if (request.method === 'POST' && request.url === '/connect') {
-    if (!sock) void connect()
-    sendJson(response, 200, { status: 'connecting' })
+    let reset = false
+    try {
+      const raw = await readBody(request)
+      if (raw.trim()) reset = Boolean(JSON.parse(raw)?.reset)
+    } catch {}
+    manualDisconnect = false
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (reset || status !== 'connected' || !sock) {
+      if (reset) clearAuthFiles()
+      try {
+        sock?.end?.(undefined)
+      } catch {}
+      sock = null
+      currentQr = null
+      status = 'connecting'
+      void connect()
+    }
+    sendJson(response, 200, { status })
     return
   }
   if (request.method === 'POST' && request.url === '/disconnect') {
-    sock?.ws?.close()
+    manualDisconnect = true
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    const prev = sock
     sock = null
     status = 'disconnected'
     currentQr = null
+    try {
+      await prev?.logout?.()
+    } catch {}
+    try {
+      prev?.end?.(undefined)
+    } catch {}
+    clearAuthFiles()
     sendJson(response, 200, { status: 'disconnected' })
     return
   }

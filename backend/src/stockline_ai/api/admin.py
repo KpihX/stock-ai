@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import asyncpg
 import httpx
 import json5
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -142,26 +143,49 @@ async def wa_status(_: str = Depends(_admin)) -> dict[str, Any]:
 
 @router.get("/whatsapp/qr")
 async def wa_qr(_: str = Depends(_admin)) -> dict[str, str]:
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await client.get(f"{_base_url()}/qr")
-        response.raise_for_status()
-        return dict(response.json())
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{_base_url()}/qr")
+            if response.status_code == 404:
+                return {"qr": ""}
+            response.raise_for_status()
+            return dict(response.json())
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"WhatsApp listener unavailable: {exc}"
+        ) from exc
 
 
 @router.post("/whatsapp/connect")
-async def wa_connect(_: str = Depends(_admin)) -> dict[str, str]:
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await client.post(f"{_base_url()}/connect")
-        response.raise_for_status()
-        return dict(response.json())
+async def wa_connect(
+    payload: dict[str, Any] | None = None, _: str = Depends(_admin)
+) -> dict[str, str]:
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(f"{_base_url()}/connect", json=payload or {})
+            response.raise_for_status()
+            data = dict(response.json())
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"WhatsApp listener unavailable: {exc}"
+        ) from exc
+    await BUS.publish({"type": "whatsapp.updated", "status": data.get("status", "connecting")})
+    return data
 
 
 @router.post("/whatsapp/disconnect")
 async def wa_disconnect(_: str = Depends(_admin)) -> dict[str, str]:
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await client.post(f"{_base_url()}/disconnect")
-        response.raise_for_status()
-        return dict(response.json())
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(f"{_base_url()}/disconnect")
+            response.raise_for_status()
+            data = dict(response.json())
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"WhatsApp listener unavailable: {exc}"
+        ) from exc
+    await BUS.publish({"type": "whatsapp.updated", "status": "disconnected"})
+    return data
 
 
 @router.get("/config")
@@ -200,14 +224,26 @@ async def list_products(_: str = Depends(_staff)) -> list[dict[str, Any]]:
 
 @router.post("/products")
 async def create_product(payload: dict[str, Any], _: str = Depends(_admin)) -> dict[str, str]:
+    pid = str(payload.get("product_id", "")).strip()
+    pname = str(payload.get("product_name", "")).strip()
+    if not pid or not pname:
+        raise HTTPException(status_code=400, detail="product_id and product_name required")
+    try:
+        price = float(payload["price"])
+        stock = float(payload["stock"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail="Valid numeric price and stock required"
+        ) from exc
     await db.pool().execute(
         "INSERT INTO product(product_id,product_name,price,stock) VALUES($1,$2,$3,$4) "
         "ON CONFLICT(product_id) DO UPDATE SET product_name=$2,price=$3,stock=$4",
-        str(payload["product_id"]).strip(),
-        str(payload["product_name"]).strip(),
-        float(payload["price"]),
-        float(payload["stock"]),
+        pid,
+        pname,
+        price,
+        stock,
     )
+    await BUS.publish({"type": "product.updated", "product_id": pid})
     return {"status": "ok"}
 
 
@@ -216,6 +252,7 @@ async def remove_product(product_id: str, _: str = Depends(_admin)) -> dict[str,
     deleted = await db.delete_product(product_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Product not found")
+    await BUS.publish({"type": "product.updated", "product_id": product_id})
     return {"status": "deleted"}
 
 
@@ -269,16 +306,27 @@ async def client_detail(client_id: str, _: str = Depends(_staff)) -> dict[str, A
 
 @router.post("/clients")
 async def create_client(payload: dict[str, Any], _: str = Depends(_admin)) -> dict[str, str]:
-    phone = "".join(ch for ch in str(payload["phone_number"]) if ch.isdigit())
-    if not phone:
-        raise HTTPException(status_code=400, detail="Valid phone_number required")
-    await db.pool().execute(
-        "INSERT INTO client(client_id,phone_number,client_name) VALUES($1,$2,$3) "
-        "ON CONFLICT(client_id) DO UPDATE SET phone_number=$2,client_name=$3",
-        str(payload["client_id"]).strip(),
-        phone,
-        str(payload["client_name"]).strip(),
-    )
+    cid = str(payload.get("client_id", "")).strip()
+    cname = str(payload.get("client_name", "")).strip()
+    phone = "".join(ch for ch in str(payload.get("phone_number", "")) if ch.isdigit())
+    if not cid or not cname or not phone:
+        raise HTTPException(
+            status_code=400, detail="client_id, client_name and valid phone_number required"
+        )
+    try:
+        await db.pool().execute(
+            "INSERT INTO client(client_id,phone_number,client_name) VALUES($1,$2,$3) "
+            "ON CONFLICT(client_id) DO UPDATE SET phone_number=$2,client_name=$3",
+            cid,
+            phone,
+            cname,
+        )
+    except asyncpg.UniqueViolationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Phone number {phone} is already assigned to another client",
+        ) from exc
+    await BUS.publish({"type": "client.updated", "client_id": cid})
     return {"status": "ok"}
 
 
@@ -287,6 +335,7 @@ async def remove_client(client_id: str, _: str = Depends(_admin)) -> dict[str, s
     deleted = await db.delete_client(client_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Client not found")
+    await BUS.publish({"type": "client.updated", "client_id": client_id})
     return {"status": "deleted"}
 
 
@@ -302,6 +351,7 @@ async def create_manager(payload: dict[str, Any], _: str = Depends(_admin)) -> d
     if not username or len(password) < 6:
         raise HTTPException(status_code=400, detail="username and password (min 6) required")
     await db.upsert_manager(username, hash_password(password), True)
+    await BUS.publish({"type": "manager.updated", "username": username})
     return {"status": "ok"}
 
 
@@ -319,6 +369,7 @@ async def update_manager(
         hash_password(str(password)) if password else existing["password_hash"],
         bool(active) if active is not None else bool(existing["is_active"]),
     )
+    await BUS.publish({"type": "manager.updated", "username": username})
     return {"status": "ok"}
 
 
@@ -327,6 +378,7 @@ async def remove_manager(username: str, _: str = Depends(_admin)) -> dict[str, s
     deleted = await db.delete_manager(username)
     if not deleted:
         raise HTTPException(status_code=404, detail="Manager not found")
+    await BUS.publish({"type": "manager.updated", "username": username})
     return {"status": "deleted"}
 
 

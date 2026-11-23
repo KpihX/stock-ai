@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
+from datetime import UTC, date, datetime
 from typing import Any
 
 import asyncpg
@@ -143,6 +145,101 @@ async def upsert_manager(username: str, password_hash: str, is_active: bool = Tr
         password_hash,
         is_active,
     )
+
+
+async def create_manual_command(
+    client_id: str,
+    product_id: str,
+    quantity: float,
+    delivery_date: date | None = None,
+    summary: str = "",
+) -> dict[str, Any]:
+    prod = await pool().fetchrow(
+        "SELECT product_id, product_name, price FROM product WHERE product_id = $1",
+        product_id,
+    )
+    if not prod:
+        raise ValueError(f"Unknown product '{product_id}'")
+    cli = await pool().fetchrow(
+        "SELECT client_id, client_name, phone_number FROM client WHERE client_id = $1",
+        client_id,
+    )
+    if not cli:
+        raise ValueError(f"Unknown client '{client_id}'")
+
+    now = datetime.now(UTC)
+    target_date = delivery_date or now.date()
+    command_id = f"C-{uuid.uuid4().hex[:8]}"
+    note = summary.strip() or f"Manual order: {quantity:g} x {prod['product_name']}"
+    await insert_command(
+        {
+            "command_id": command_id,
+            "client_id": client_id,
+            "recorded_at": now,
+            "delivery_date": target_date,
+            "product_id": product_id,
+            "price": float(prod["price"]),
+            "quantity": float(quantity),
+            "status": "new",
+            "summary": note,
+        }
+    )
+    row = await fetch_command(command_id)
+    return row or {"command_id": command_id}
+
+
+async def update_command(
+    command_id: str,
+    *,
+    quantity: float | None = None,
+    status: str | None = None,
+    summary: str | None = None,
+) -> dict[str, Any] | None:
+    existing = await fetch_command(command_id)
+    if not existing:
+        return None
+    prev_status = str(existing.get("status") or "new")
+    prev_qty = float(existing.get("quantity") or 0)
+    next_qty = float(quantity) if quantity is not None else prev_qty
+    next_status = str(status).strip().lower() if status is not None else prev_status
+    if next_status not in {"new", "processed", "rejected", "cancelled"}:
+        raise ValueError(f"Invalid status '{next_status}'")
+    next_summary = (
+        str(summary).strip() if summary is not None else str(existing.get("summary") or "")
+    )
+
+    product_id = str(existing.get("product_id") or "")
+    if product_id:
+        if prev_status == "processed" and next_status != "processed":
+            await adjust_stock(product_id, prev_qty)
+        elif prev_status != "processed" and next_status == "processed":
+            await adjust_stock(product_id, -next_qty)
+        elif prev_status == "processed" and next_status == "processed" and next_qty != prev_qty:
+            await adjust_stock(product_id, prev_qty - next_qty)
+
+    await pool().execute(
+        """UPDATE command
+           SET quantity = $2, status = $3, summary = $4
+           WHERE command_id = $1""",
+        command_id,
+        next_qty,
+        next_status,
+        next_summary,
+    )
+    return await fetch_command(command_id)
+
+
+async def delete_command(command_id: str) -> bool:
+    existing = await fetch_command(command_id)
+    if not existing:
+        return False
+    if str(existing.get("status") or "") == "processed":
+        product_id = str(existing.get("product_id") or "")
+        qty = float(existing.get("quantity") or 0)
+        if product_id and qty > 0:
+            await adjust_stock(product_id, qty)
+    result = await pool().execute("DELETE FROM command WHERE command_id = $1", command_id)
+    return result.endswith("1")
 
 
 async def delete_manager(username: str) -> bool:

@@ -38,4 +38,4 @@ COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/nod
 ENV PATH="/app/.venv/bin:/usr/local/bin:$PATH" PYTHONUNBUFFERED=1
 ENV STOCKLINE_WA_URL=http://localhost:3001
 EXPOSE 8000
-CMD ["sh", "-c", "(cd /app/wa && /usr/local/bin/node node_modules/.bin/tsx src/index.ts) & exec stockline-api"]
+CMD ["sh", "-c", "(cd /app/wa && while true; do /usr/local/bin/node node_modules/.bin/tsx src/index.ts || true; echo '[wa] listener exited, restarting in 2s...'; sleep 2; done) & exec stockline-api"]

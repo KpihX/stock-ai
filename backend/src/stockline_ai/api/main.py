@@ -10,8 +10,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from ..config import validate_startup
@@ -49,6 +50,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
+    # Keep unhandled errors inside CORSMiddleware so browsers never see a generic "Failed to fetch".
+    return JSONResponse(status_code=500, content={"detail": str(exc) or "Internal server error"})
+
+
 app.include_router(admin.router)
 app.include_router(calls.router)
 
@@ -60,8 +69,14 @@ def run() -> None:
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict[str, Any]:
+    wa_ok = False
+    try:
+        res = await whats.health()
+        wa_ok = bool(res.get("status") == "ok")
+    except Exception:
+        wa_ok = False
+    return {"status": "ok", "wa_listener": wa_ok}
 
 
 @app.post("/api/auth/login", response_model=TokenResponse)
@@ -110,7 +125,96 @@ async def commands(
 
 @app.get("/api/commands/stream")
 async def command_stream(_: str = Depends(verify_token)) -> EventSourceResponse:
-    return EventSourceResponse(BUS.stream())
+    return EventSourceResponse(
+        BUS.stream(),
+        ping=15,
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/commands")
+async def create_command_manual(
+    payload: dict[str, Any], actor: str = Depends(verify_token)
+) -> dict[str, Any]:
+    client_id = str(payload.get("client_id", "")).strip()
+    product_id = str(payload.get("product_id", "")).strip()
+    quantity = float(payload.get("quantity") or 0)
+    summary = str(payload.get("summary") or "").strip()
+    if not client_id or not product_id or quantity <= 0:
+        raise HTTPException(
+            status_code=400, detail="client_id, product_id and quantity > 0 required"
+        )
+    try:
+        row = await db.create_manual_command(client_id, product_id, quantity, summary=summary)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await publish(
+        {
+            "type": "command.created",
+            "node": "db.command",
+            "command_id": str(row.get("command_id", "")),
+            "client_id": client_id,
+            "actor": actor,
+            "status": "new",
+            "message": f"Created {row.get('command_id')} manually by {actor}",
+        }
+    )
+    return Command(**row).model_dump(mode="json")
+
+
+@app.patch("/api/commands/{command_id}")
+async def patch_command(
+    command_id: str, payload: dict[str, Any], actor: str = Depends(verify_token)
+) -> dict[str, Any]:
+    qty = (
+        float(payload["quantity"])
+        if "quantity" in payload and payload["quantity"] is not None
+        else None
+    )
+    if qty is not None and qty <= 0:
+        raise HTTPException(status_code=400, detail="quantity must be > 0")
+    status = (
+        str(payload["status"]) if "status" in payload and payload["status"] is not None else None
+    )
+    summary = (
+        str(payload["summary"]) if "summary" in payload and payload["summary"] is not None else None
+    )
+    try:
+        updated = await db.update_command(command_id, quantity=qty, status=status, summary=summary)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Command not found")
+    await publish(
+        {
+            "type": "command.modified",
+            "node": "db.command",
+            "command_id": command_id,
+            "client_id": str(updated.get("client_id", "")),
+            "actor": actor,
+            "status": str(updated.get("status", "new")),
+            "message": f"Updated {command_id} by {actor}",
+        }
+    )
+    return Command(**updated).model_dump(mode="json")
+
+
+@app.delete("/api/commands/{command_id}")
+async def remove_command(command_id: str, actor: str = Depends(verify_token)) -> dict[str, str]:
+    deleted = await db.delete_command(command_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Command not found")
+    await publish(
+        {
+            "type": "command.deleted",
+            "node": "db.command",
+            "command_id": command_id,
+            "actor": actor,
+            "status": "deleted",
+            "message": f"Deleted {command_id} by {actor}",
+        }
+    )
+    return {"status": "deleted", "command_id": command_id}
 
 
 @app.get("/api/commands/{command_id}", response_model=CommandDetail)

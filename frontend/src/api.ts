@@ -123,6 +123,32 @@ export const api = {
     return extractItems<Command>(payload);
   },
 
+  createCommand: (payload: {
+    client_id: string;
+    product_id: string;
+    quantity: number;
+    summary?: string;
+  }) =>
+    request<Command>("/api/commands", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateCommand: (
+    id: string,
+    payload: { quantity?: number; status?: string; summary?: string },
+  ) =>
+    request<Command>(`/api/commands/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteCommand: (id: string) =>
+    request<{ status: string; command_id: string }>(
+      `/api/commands/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
+
   getCommand: (id: string) =>
     request<Command>(`/api/commands/${encodeURIComponent(id)}`),
 
@@ -221,8 +247,11 @@ export const api = {
 
   waQr: () => request<{ qr: string }>("/admin/whatsapp/qr"),
 
-  waConnect: () =>
-    request<{ status: string }>("/admin/whatsapp/connect", { method: "POST" }),
+  waConnect: (reset = false) =>
+    request<{ status: string }>("/admin/whatsapp/connect", {
+      method: "POST",
+      body: JSON.stringify({ reset }),
+    }),
 
   waDisconnect: () =>
     request<{ status: string }>("/admin/whatsapp/disconnect", {
