@@ -16,16 +16,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..config import CONFIG
-from . import db
+from . import db, stt
 from .auth import verify_token
-from .pipeline import handle_signal, publish, transcribe_wav_file
+from .pipeline import handle_signal, publish
 from .schemas import Signal
 from .whats import _base_url
 
 router = APIRouter(tags=["calls"])
 
 _calls: dict[str, dict[str, Any]] = {}
-_stt_semaphore = asyncio.Semaphore(1)
+_stt_semaphore = asyncio.Semaphore(4)
 
 _SILENCE_MARKERS = {"[BLANK_AUDIO]", "(silence)", "[silence]", "(musique)", "[Music]"}
 
@@ -238,8 +238,8 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
             products = await db.fetch_products()
             product_names = [str(p["product_name"]) for p in products if p.get("product_name")]
             async with _stt_semaphore:
-                stt = await transcribe_wav_file(wav_path, product_names)
-            text = str(stt.get("text", "")).strip()
+                stt_res = await stt.transcribe_wav(wav_path, product_names)
+            text = str(stt_res.get("text", "")).strip()
             if text and text not in _SILENCE_MARKERS:
                 entry = {
                     "id": f"{call_id}_{utt_seq}",

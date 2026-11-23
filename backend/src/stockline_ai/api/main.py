@@ -14,8 +14,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from ..config import CONFIG, validate_startup
-from . import admin, calls, db, whats
+from ..config import validate_startup
+from . import admin, calls, db, stt, whats
 from .auth import check_credentials, create_token, get_claims, verify_token
 from .events import BUS
 from .pipeline import handle_signal, publish, set_event_bus
@@ -288,41 +288,9 @@ async def call_socket(websocket: WebSocket, call_id: str) -> None:
                     else base64.b64decode(message.get("data", ""))
                 )
                 tmp = Path("/tmp") / f"call_{call_id}_{len(transcript)}.webm"
-                wav = Path("/tmp") / f"call_{call_id}_{len(transcript)}.wav"
                 tmp.write_bytes(raw)
-                text = ""
-                try:
-                    ff = await asyncio.create_subprocess_exec(
-                        "ffmpeg",
-                        "-y",
-                        "-i",
-                        str(tmp),
-                        "-ar",
-                        "16000",
-                        "-ac",
-                        "1",
-                        str(wav),
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    await ff.communicate()
-                    proc = await asyncio.create_subprocess_exec(
-                        CONFIG.bin_for("stt") or "whisper-cli",
-                        "-m",
-                        str(CONFIG.stt_models_dir / CONFIG.model_for("stt")),
-                        "-l",
-                        "fr",
-                        "-f",
-                        str(wav if wav.is_file() else tmp),
-                        "-nt",
-                        "-np",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    out, _ = await proc.communicate()
-                    text = " ".join(out.decode(errors="ignore").split()).strip()
-                except OSError:
-                    text = ""
+                res = await stt.transcribe_media(str(tmp), [])
+                text = str(res.get("text") or "").strip()
                 if text:
                     transcript.append(text)
                 await websocket.send_json({"type": "transcript", "text": text, "call_id": call_id})

@@ -37,8 +37,9 @@ def test_jsonc_file_loads_with_comments() -> None:
 
 def test_default_selection_matches_the_hackathon_choices() -> None:
     assert CONFIG.provider("messaging") == "baileys"
-    assert CONFIG.provider("stt") == "whisper"
-    assert CONFIG.provider("ocr") == "tesseract"
+    assert CONFIG.provider("calls") == "baileys_voip"
+    assert CONFIG.provider("stt") == "nvidia_whisper"
+    assert CONFIG.provider("ocr") == "nemotron_vl"
     assert CONFIG.provider("tts") == "edge_tts"
     assert CONFIG.provider("agent_llm") == "nvidia"
     assert CONFIG.system_prompt.startswith("You convert")

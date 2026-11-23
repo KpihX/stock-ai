@@ -4,8 +4,8 @@
   "selection": {
     "messaging": "baileys",
     "calls": "baileys_voip",
-    "stt": "whisper",
-    "ocr": "tesseract",
+    "stt": "nvidia_whisper",
+    "ocr": "nemotron_vl",
     "tts": "edge_tts",
     "agent_llm": "nvidia"
   },
@@ -35,13 +35,15 @@
       "ice_servers": ["stun:stun.l.google.com:19302"]
     },
     "stt": {
+      "language": "fr",
+      "fallback": "whisper",
       "bin": "whisper-cli",
-      "model": "ggml-large-v3-turbo-q5_0.bin",
       "models_dir": "/app/models/whisper"
     },
     "ocr": {
-      "bin": "tesseract",
-      "languages": "eng+fra"
+      "languages": "eng+fra",
+      "fallback": "tesseract",
+      "bin": "tesseract"
     },
     "tts": {
       "voice": "fr-FR-DeniseNeural"
@@ -59,6 +61,12 @@
   // overrides.<brick>.<selected provider> -> settings.<brick> -> registry default.
   // Example: switch selection.tts to "piper" and uncomment the block below.
   "overrides": {
+    // "stt": {
+    //   "whisper": { "model": "ggml-large-v3-turbo-q5_0.bin", "language": "fr" }
+    // },
+    // "ocr": {
+    //   "tesseract": { "languages": "eng+fra" }
+    // },
     // "tts": {
     //   "piper": { "voice": "fr_FR-siwis-medium" }
     // }

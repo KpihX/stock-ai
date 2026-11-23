@@ -103,7 +103,7 @@ def test_call_ended_before_utterance_still_commits() -> None:
                 new=AsyncMock(return_value=[{"product_name": "Pain de campagne"}]),
             ),
             patch("stockline_ai.api.calls.publish", new=AsyncMock()),
-            patch("stockline_ai.api.calls.transcribe_wav_file", side_effect=fake_transcribe),
+            patch("stockline_ai.api.calls.stt.transcribe_wav", side_effect=fake_transcribe),
             patch("stockline_ai.api.calls.handle_signal", side_effect=fake_handle_signal),
         ):
             await calls.call_webhook(

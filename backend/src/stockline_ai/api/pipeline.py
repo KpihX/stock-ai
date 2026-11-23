@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 from ..config import CONFIG
-from . import db, whats
+from . import db, ocr, stt, whats
 from .llm import normalize
 from .schemas import ClientStats, EnrichedData, OrderLine, Product, Signal
 
@@ -199,101 +198,18 @@ def _digits(value: str) -> str:
 
 
 async def transcribe_wav_file(wav_path: Path, product_names: list[str]) -> dict[str, Any]:
-    """Run whisper-cli directly on a 16 kHz mono WAV file using the catalogue prompt."""
-    if not wav_path.is_file():
-        return {"text": "", "error": f"WAV file not found: {wav_path}"}
-    whisper_bin = CONFIG.bin_for("stt") or "whisper-cli"
-    model_path = CONFIG.stt_models_dir / CONFIG.model_for("stt")
-    vocab = (
-        ", ".join(product_names) if product_names else "pain de campagne, tomates grappe, cabillaud"
-    )
-    prompt = (
-        f"Commande alimentaire grossiste en français. Catalogue : {vocab}. "
-        "Unités : kilos, kg, pièces, unités, caisses, pour demain, lundi, mardi soir, mercredi."
-    )
-    proc = await asyncio.create_subprocess_exec(
-        whisper_bin,
-        "-m",
-        str(model_path),
-        "-l",
-        "fr",
-        "--prompt",
-        prompt,
-        "-nt",
-        "-np",
-        "-f",
-        str(wav_path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
-    transcript = " ".join(out.decode(errors="ignore").split()).strip()
-    return {
-        "text": transcript,
-        "wav_path": str(wav_path),
-        "bin": whisper_bin,
-        "model": str(model_path),
-        "prompt": prompt,
-        "returncode": proc.returncode,
-        "stderr": err.decode(errors="ignore")[:300],
-    }
+    """Delegate 16 kHz mono WAV transcription to the active extensible STT brick."""
+    return await stt.transcribe_wav(wav_path, product_names)
 
 
 async def _transcribe_audio(media_path: str, product_names: list[str]) -> dict[str, Any]:
-    path = Path(media_path)
-    if not path.is_file():
-        return {"text": "", "error": f"Audio file not found: {media_path}"}
-    wav_path = path.with_suffix(".wav")
-    ff = await asyncio.create_subprocess_exec(
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(path),
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        str(wav_path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, ff_err = await ff.communicate()
-    if ff.returncode != 0 or not wav_path.is_file():
-        return {
-            "text": "",
-            "error": f"ffmpeg failed ({ff.returncode}): {ff_err.decode(errors='ignore')[:300]}",
-        }
-    return await transcribe_wav_file(wav_path, product_names)
+    return await stt.transcribe_media(media_path, product_names)
 
 
-async def _extract_ocr(media_path: str, caption: str) -> dict[str, Any]:
-    path = Path(media_path)
-    if not path.is_file():
-        return {"text": caption, "error": f"Image file not found: {media_path}"}
-    ocr_bin = CONFIG.bin_for("ocr") or "tesseract"
-    langs = CONFIG.model_for("ocr") or "eng+fra"
-    proc = await asyncio.create_subprocess_exec(
-        ocr_bin,
-        str(path),
-        "stdout",
-        "-l",
-        langs,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
-    extracted = " ".join(out.decode(errors="ignore").split()).strip()
-    clean_caption = "" if caption == "[image]" else caption.strip()
-    combined = f"{clean_caption} {extracted}".strip() if clean_caption else extracted
-    return {
-        "text": combined,
-        "ocr_raw": extracted,
-        "caption": clean_caption,
-        "bin": ocr_bin,
-        "languages": langs,
-        "returncode": proc.returncode,
-        "stderr": err.decode(errors="ignore")[:300],
-    }
+async def _extract_ocr(
+    media_path: str, caption: str, product_names: list[str] | None = None
+) -> dict[str, Any]:
+    return await ocr.extract_image_text(media_path, caption, product_names)
 
 
 async def handle_signal(signal: Signal) -> dict[str, Any]:
@@ -364,6 +280,7 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
     if signal.modality == "audio":
         if signal.media_path:
             stt_res = await _transcribe_audio(signal.media_path, product_names)
+            stt_provider = str(stt_res.get("provider") or CONFIG.provider("stt"))
             if stt_res.get("text"):
                 signal = signal.model_copy(update={"texte": str(stt_res["text"])})
             await publish(
@@ -374,9 +291,9 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
                     "phone_number": phone,
                     "status": "ok" if stt_res.get("text") else "rejected",
                     "message": (
-                        f"Whisper transcript: {signal.texte[:140]}"
+                        f"[{stt_provider}] {signal.texte[:140]}"
                         if stt_res.get("text")
-                        else f"Whisper failed: {stt_res.get('error', 'empty transcript')}"
+                        else f"[{stt_provider}] failed: {stt_res.get('error', 'empty transcript')}"
                     ),
                     "stt": stt_res,
                 }
@@ -389,7 +306,7 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
                     "client_id": client["client_id"],
                     "phone_number": phone,
                     "status": "ok",
-                    "message": f"Whisper transcript (pre-supplied): {signal.texte[:140]}",
+                    "message": f"STT transcript (pre-supplied): {signal.texte[:140]}",
                 }
             )
         if not signal.texte or signal.texte == "[voice]":
@@ -397,7 +314,8 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
 
     if signal.modality == "image":
         if signal.media_path:
-            ocr_res = await _extract_ocr(signal.media_path, signal.texte)
+            ocr_res = await _extract_ocr(signal.media_path, signal.texte, product_names)
+            ocr_provider = str(ocr_res.get("provider") or CONFIG.provider("ocr"))
             if ocr_res.get("text"):
                 signal = signal.model_copy(update={"texte": str(ocr_res["text"])})
             await publish(
@@ -408,9 +326,9 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
                     "phone_number": phone,
                     "status": "ok" if ocr_res.get("text") else "rejected",
                     "message": (
-                        f"Tesseract OCR: {signal.texte[:140]}"
+                        f"[{ocr_provider}] {signal.texte[:140]}"
                         if ocr_res.get("text")
-                        else f"Tesseract failed: {ocr_res.get('error', 'empty text')}"
+                        else f"[{ocr_provider}] failed: {ocr_res.get('error', 'empty text')}"
                     ),
                     "ocr": ocr_res,
                 }

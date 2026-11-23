@@ -146,48 +146,49 @@ const GRAPH_NODES: GraphNodeDef[] = [
   },
   {
     id: "stt.whisper",
-    badge: "Docker STT",
-    title: "Whisper Turbo",
+    badge: "NIM / Local STT",
+    title: "Speech-to-Text",
     stage: "2 · Extraction",
     x: 310,
     y: 150,
     hasIn: true,
     hasOut: true,
-    role: "Converts .ogg Opus to 16 kHz mono WAV via ffmpeg and runs compiled /usr/local/bin/whisper-cli with ggml-large-v3-turbo-q5_0.bin (-l fr) primed with catalogue product names.",
+    role: "Extensible STT brick (config.jsonc selection.stt): NVIDIA NIM Whisper Large v3 / Parakeet Multilingual (<1s) with local whisper-cli fallback.",
     schema: `STTOutput {
   text: string
-  wav_path: string
-  bin: "/usr/local/bin/whisper-cli"
-  model: "/app/models/whisper/ggml-large-v3-turbo-q5_0.bin"
-  prompt: catalogue_vocabulary
+  provider: "nvidia_whisper" | "nvidia_parakeet" | "whisper"
+  model: string
+  elapsed_ms: number
 }`,
     example: {
       text: "J'aimerais aussi avoir 10 kg de tomates grappes, s'il vous plaît.",
-      model: "/app/models/whisper/ggml-large-v3-turbo-q5_0.bin",
-      returncode: 0,
+      provider: "nvidia_whisper",
+      model: "openai/whisper-large-v3",
+      elapsed_ms: 820,
     },
   },
   {
     id: "ocr.tesseract",
-    badge: "Docker OCR",
-    title: "Tesseract OCR",
+    badge: "NIM VL / OCR",
+    title: "Vision / OCR",
     stage: "2 · Extraction",
     x: 310,
     y: 304,
     hasIn: true,
     hasOut: true,
-    role: "Extracts structured text from purchase-order images inside the container using /usr/bin/tesseract (-l eng+fra) and merges it with any WhatsApp caption.",
+    role: "Extensible OCR brick (config.jsonc selection.ocr): NVIDIA Nemotron 3.5 Super VL 120B (handwritten + printed notes) with local Tesseract fallback.",
     schema: `OCROutput {
   text: string
   ocr_raw: string
-  caption: string
-  bin: "tesseract"
-  languages: "eng+fra"
+  provider: "nemotron_vl" | "tesseract"
+  model: string
+  elapsed_ms: number
 }`,
     example: {
-      text: "BON DE COMMANDE YOHANN Merci de livrer 3 Cabillaud 3/5 pour jeudi",
-      languages: "eng+fra",
-      returncode: 0,
+      text: "4 kg tomates grappe, 3 pains de campagne pour mardi soir",
+      provider: "nemotron_vl",
+      model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+      elapsed_ms: 1120,
     },
   },
   {

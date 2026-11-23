@@ -27,8 +27,8 @@ load_dotenv(_ROOT_DIR / ".env", override=False)
 DEFAULT_SELECTION: dict[str, str] = {
     "messaging": "baileys",
     "calls": "baileys_voip",
-    "stt": "whisper",
-    "ocr": "tesseract",
+    "stt": "nvidia_whisper",
+    "ocr": "nemotron_vl",
     "tts": "edge_tts",
     "agent_llm": "nvidia",
 }
@@ -126,6 +126,14 @@ class Config:
     def bin_for(self, brick: str) -> str:
         """Return the active executable name for a local brick."""
         return str(self.param(brick, "bin", ""))
+
+    def function_id_for(self, brick: str) -> str:
+        """Return the active cloud function ID (e.g. NVIDIA NVCF) for a brick."""
+        return str(self.param(brick, "function_id", self.spec(brick).function_id))
+
+    def fallback_for(self, brick: str) -> str:
+        """Return optional fallback provider key when the primary remote brick fails."""
+        return str(self.param(brick, "fallback", ""))
 
     def path_for(self, name: str, default: str) -> Path:
         """Resolve a runtime path, expanding ~ without hardcoding a home directory."""

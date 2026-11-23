@@ -18,6 +18,7 @@ class ProviderSpec:
     label: str
     model: str = ""
     base_url: str = ""
+    function_id: str = ""
     api_key_env: tuple[str, ...] = ()
     install_extra: str = ""
 
@@ -45,6 +46,22 @@ CALLS: dict[str, ProviderSpec] = {
 }
 
 STT: dict[str, ProviderSpec] = {
+    "nvidia_whisper": ProviderSpec(
+        key="nvidia_whisper",
+        label="NVIDIA NIM hosted OpenAI Whisper Large v3 via Riva gRPC",
+        model="openai/whisper-large-v3",
+        base_url="grpc.nvcf.nvidia.com:443",
+        function_id="b702f636-f60c-4a3d-a6f4-f3568c13bd7d",
+        api_key_env=("NVIDIA_API_KEY",),
+    ),
+    "nvidia_parakeet": ProviderSpec(
+        key="nvidia_parakeet",
+        label="NVIDIA NIM hosted Parakeet 1.1B Multilingual ASR via Riva gRPC",
+        model="nvidia/parakeet-1.1b-rnnt-multilingual-asr",
+        base_url="grpc.nvcf.nvidia.com:443",
+        function_id="71203149-d3b7-4460-8231-1be2543a1fca",
+        api_key_env=("NVIDIA_API_KEY",),
+    ),
     "whisper": ProviderSpec(
         key="whisper",
         label="Local whisper.cpp with the multilingual ggml turbo model",
@@ -53,6 +70,13 @@ STT: dict[str, ProviderSpec] = {
 }
 
 OCR: dict[str, ProviderSpec] = {
+    "nemotron_vl": ProviderSpec(
+        key="nemotron_vl",
+        label="NVIDIA NIM Nemotron 3.5 Super VL 120B multimodal OCR & handwriting reader",
+        model="nvidia/nemotron-3.5-super-vl-120b-a12b",
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key_env=("NVIDIA_API_KEY",),
+    ),
     "tesseract": ProviderSpec(
         key="tesseract",
         label="Local Tesseract with English and French language data",
