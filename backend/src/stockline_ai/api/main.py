@@ -263,11 +263,30 @@ async def call_socket(websocket: WebSocket, call_id: str) -> None:
     caller_phone = ""
     try:
         while True:
-            message = await websocket.receive_json()
+            frame = await websocket.receive()
+            if frame.get("type") == "websocket.disconnect":
+                raise WebSocketDisconnect(code=int(frame.get("code") or 1000))
+            raw_bytes: bytes | None = frame.get("bytes")
+            message: dict[str, Any] = {}
+            if raw_bytes is not None:
+                message = {"type": "audio_bytes"}
+            elif frame.get("text"):
+                import json
+
+                try:
+                    parsed = json.loads(str(frame["text"]))
+                    if isinstance(parsed, dict):
+                        message = parsed
+                except ValueError:
+                    continue
             if message.get("phone"):
                 caller_phone = str(message.get("phone") or "")
-            if message.get("type") == "audio":
-                raw = base64.b64decode(message.get("data", ""))
+            if raw_bytes is not None or message.get("type") == "audio":
+                raw = (
+                    raw_bytes
+                    if raw_bytes is not None
+                    else base64.b64decode(message.get("data", ""))
+                )
                 tmp = Path("/tmp") / f"call_{call_id}_{len(transcript)}.webm"
                 wav = Path("/tmp") / f"call_{call_id}_{len(transcript)}.wav"
                 tmp.write_bytes(raw)

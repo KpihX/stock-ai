@@ -25,6 +25,7 @@ from .whats import _base_url
 router = APIRouter(tags=["calls"])
 
 _calls: dict[str, dict[str, Any]] = {}
+_stt_semaphore = asyncio.Semaphore(1)
 
 _SILENCE_MARKERS = {"[BLANK_AUDIO]", "(silence)", "[silence]", "(musique)", "[Music]"}
 
@@ -119,6 +120,22 @@ async def _commit_call_order(call_id: str) -> dict[str, Any] | None:
     return await handle_signal(sig)
 
 
+async def _safe_commit_call_order(call_id: str) -> None:
+    try:
+        await _commit_call_order(call_id)
+    except Exception as exc:
+        print(f"[calls] _commit_call_order failed for {call_id}: {exc}", flush=True)
+        await publish(
+            {
+                "type": "call.commit_error",
+                "node": "cmd.handler",
+                "call_id": call_id,
+                "status": "error",
+                "message": f"Order extraction failed for call {call_id}: {exc}",
+            }
+        )
+
+
 @router.post("/webhooks/call")
 async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
     """Receive call lifecycle events and VAD audio utterances from the WA VoIP listener."""
@@ -145,6 +162,8 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
             "started_at": datetime.now(UTC).isoformat(),
             "muted": False,
             "committed": False,
+            "utterance_seq": 0,
+            "in_flight": 0,
             "transcripts": [],
             "stats": {},
         }
@@ -178,6 +197,8 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
             "started_at": datetime.now(UTC).isoformat(),
             "muted": False,
             "committed": False,
+            "utterance_seq": 0,
+            "in_flight": 0,
             "transcripts": [],
             "stats": {},
         },
@@ -206,41 +227,58 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
         if not wav_b64:
             return {"status": "ignored", "reason": "empty audio"}
         raw_wav = base64.b64decode(wav_b64)
-        utt_idx = len(record["transcripts"]) + 1
-        wav_path = Path(tempfile.gettempdir()) / f"stockline_call_{call_id}_{utt_idx}.wav"
+        utt_seq = int(record.get("utterance_seq", 0)) + 1
+        record["utterance_seq"] = utt_seq
+        record["in_flight"] = int(record.get("in_flight", 0)) + 1
+        wav_path = Path(tempfile.gettempdir()) / f"stockline_call_{call_id}_{utt_seq}.wav"
         wav_path.write_bytes(raw_wav)
 
-        products = await db.fetch_products()
-        product_names = [str(p["product_name"]) for p in products if p.get("product_name")]
-        stt = await transcribe_wav_file(wav_path, product_names)
-        text = str(stt.get("text", "")).strip()
+        text = ""
+        try:
+            products = await db.fetch_products()
+            product_names = [str(p["product_name"]) for p in products if p.get("product_name")]
+            async with _stt_semaphore:
+                stt = await transcribe_wav_file(wav_path, product_names)
+            text = str(stt.get("text", "")).strip()
+            if text and text not in _SILENCE_MARKERS:
+                entry = {
+                    "id": f"{call_id}_{utt_seq}",
+                    "seq": utt_seq,
+                    "speaker": "client",
+                    "text": text,
+                    "duration_ms": duration_ms,
+                    "ts": datetime.now(UTC).isoformat(),
+                }
+                record["transcripts"].append(entry)
+                record["transcripts"].sort(key=lambda t: int(t.get("seq", 0)))
+                full_transcript = " ".join(t["text"] for t in record["transcripts"]).strip()
+                await publish(
+                    {
+                        "type": "call.transcript",
+                        "node": "stt.whisper",
+                        "call_id": call_id,
+                        "phone_number": record["phone_number"],
+                        "client_id": record["client_id"],
+                        "client_name": record["client_name"],
+                        "status": "transcribed",
+                        "text": text,
+                        "full_transcript": full_transcript,
+                        "duration_ms": duration_ms,
+                        "message": f'[{record["client_name"]}] "{text}"',
+                    }
+                )
+        finally:
+            record["in_flight"] = max(0, int(record.get("in_flight", 1)) - 1)
+            if (
+                record.get("status") in {"ended", "completed"}
+                and record["in_flight"] == 0
+                and record["transcripts"]
+                and not record.get("committed")
+            ):
+                asyncio.create_task(_safe_commit_call_order(call_id))
+
         if not text or text in _SILENCE_MARKERS:
             return {"status": "silence", "text": ""}
-
-        entry = {
-            "id": f"{call_id}_{utt_idx}",
-            "speaker": "client",
-            "text": text,
-            "duration_ms": duration_ms,
-            "ts": datetime.now(UTC).isoformat(),
-        }
-        record["transcripts"].append(entry)
-        full_transcript = " ".join(t["text"] for t in record["transcripts"]).strip()
-        await publish(
-            {
-                "type": "call.transcript",
-                "node": "stt.whisper",
-                "call_id": call_id,
-                "phone_number": record["phone_number"],
-                "client_id": record["client_id"],
-                "client_name": record["client_name"],
-                "status": "transcribed",
-                "text": text,
-                "full_transcript": full_transcript,
-                "duration_ms": duration_ms,
-                "message": f'[{record["client_name"]}] "{text}"',
-            }
-        )
         return {"status": "ok", "text": text}
 
     if event == "call.ended":
@@ -262,8 +300,12 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
                 "message": f"Call {call_id} ended ({record['reason']})",
             }
         )
-        if record["transcripts"] and not record.get("committed"):
-            asyncio.create_task(_commit_call_order(call_id))
+        if (
+            int(record.get("in_flight", 0)) == 0
+            and record["transcripts"]
+            and not record.get("committed")
+        ):
+            asyncio.create_task(_safe_commit_call_order(call_id))
         return {"status": "ok"}
 
     return {"status": "ignored"}

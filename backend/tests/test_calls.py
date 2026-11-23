@@ -70,3 +70,64 @@ def test_call_webhook_lifecycle() -> None:
 
     asyncio.run(_run())
     calls._calls.clear()
+
+
+def test_call_ended_before_utterance_still_commits() -> None:
+    import base64
+
+    calls._calls.clear()
+    committed_texts: list[str] = []
+
+    async def fake_transcribe(wav_path, product_names):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(0.05)
+        return {"text": "Trois pains de campagne pour mardi soir."}
+
+    async def fake_handle_signal(sig):  # type: ignore[no-untyped-def]
+        committed_texts.append(sig.texte)
+        return {"status": "ok"}
+
+    async def _run() -> None:
+        with (
+            patch(
+                "stockline_ai.api.calls.db.fetch_client_by_phone",
+                new=AsyncMock(
+                    return_value={
+                        "client_id": "CLI-0045",
+                        "client_name": "Yohann Bikele",
+                        "phone_number": "33745746025",
+                    }
+                ),
+            ),
+            patch(
+                "stockline_ai.api.calls.db.fetch_products",
+                new=AsyncMock(return_value=[{"product_name": "Pain de campagne"}]),
+            ),
+            patch("stockline_ai.api.calls.publish", new=AsyncMock()),
+            patch("stockline_ai.api.calls.transcribe_wav_file", side_effect=fake_transcribe),
+            patch("stockline_ai.api.calls.handle_signal", side_effect=fake_handle_signal),
+        ):
+            await calls.call_webhook(
+                {"event": "call.incoming", "call_id": "RACE1", "from": "33745746025"}
+            )
+            wav_b64 = base64.b64encode(b"RIFF0000WAVEfmt ").decode("ascii")
+            utt_task = asyncio.create_task(
+                calls.call_webhook(
+                    {
+                        "event": "call.utterance",
+                        "call_id": "RACE1",
+                        "from": "33745746025",
+                        "duration_ms": 2000,
+                        "wav_base64": wav_b64,
+                    }
+                )
+            )
+            await asyncio.sleep(0.01)
+            await calls.call_webhook(
+                {"event": "call.ended", "call_id": "RACE1", "from": "33745746025"}
+            )
+            await utt_task
+            await asyncio.sleep(0.02)
+
+    asyncio.run(_run())
+    assert committed_texts == ["Trois pains de campagne pour mardi soir."]
+    calls._calls.clear()
