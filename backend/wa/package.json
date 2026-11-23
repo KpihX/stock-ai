@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/patch-baileys-voip.mjs",
     "start": "tsx src/index.ts"
   },
   "dependencies": {

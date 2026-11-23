@@ -48,6 +48,7 @@ export class VoipBridgeManager {
 
   private voip: any = null
   private attachedSock: any = null
+  private incomingHandler: ((session: any) => void) | null = null
 
   constructor(opts: {
     apiUrl: string
@@ -67,28 +68,40 @@ export class VoipBridgeManager {
     if (!sock || this.attachedSock === sock) return
     this.attachedSock = sock
     try {
-      const mod: any = await import('@innovatorssoft/baileys')
-      const VoipClient = mod.VoipClient || mod.default?.VoipClient
-      if (!VoipClient) {
-        console.warn('[voip] VoipClient export not found in @innovatorssoft/baileys')
-        return
-      }
-      if (this.voip) {
+      if (this.voip && this.incomingHandler) {
         try {
-          this.voip.removeAllListeners?.()
+          this.voip.off?.('call_incoming', this.incomingHandler) ??
+            this.voip.removeListener?.('call_incoming', this.incomingHandler)
         } catch {}
       }
-      this.voip = new VoipClient({
-        maxConcurrentCalls: this.maxConcurrentCalls,
-        pthreadPoolSize: this.pthreadPoolSize,
-        diagnostic: false,
-      })
-      await this.voip.initWithSocket(sock)
-      console.log('[voip] VoipClient attached to Baileys socket')
 
-      this.voip.on('call_incoming', (session: any) => {
+      if (typeof sock.getVoipClient === 'function') {
+        this.voip = await sock.getVoipClient()
+        this.voip.setOptions?.({
+          maxConcurrentCalls: this.maxConcurrentCalls,
+          pthreadPoolSize: this.pthreadPoolSize,
+        })
+        console.log('[voip] attached to built-in sock.getVoipClient()')
+      } else {
+        const mod: any = await import('@innovatorssoft/baileys')
+        const VoipClient = mod.VoipClient || mod.default?.VoipClient
+        if (!VoipClient) {
+          console.warn('[voip] VoipClient export not found in @innovatorssoft/baileys')
+          return
+        }
+        this.voip = new VoipClient({
+          maxConcurrentCalls: this.maxConcurrentCalls,
+          pthreadPoolSize: this.pthreadPoolSize,
+          diagnostic: false,
+        })
+        await this.voip.initWithSocket(sock)
+        console.log('[voip] VoipClient attached via initWithSocket(sock)')
+      }
+
+      this.incomingHandler = (session: any) => {
         void this.handleIncomingWhatsAppCall(session)
-      })
+      }
+      this.voip.on('call_incoming', this.incomingHandler)
     } catch (err) {
       console.error('[voip] failed to initialize VoipClient', err)
     }

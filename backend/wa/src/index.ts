@@ -219,7 +219,11 @@ async function connect(): Promise<void> {
     version,
     auth: state,
     browser: ['Stockline', 'Chrome', '1.0.0'],
-  })
+    voip: {
+      maxConcurrentCalls: callsCfg.maxConcurrentCalls,
+      pthreadPoolSize: callsCfg.pthreadPoolSize,
+    },
+  } as any)
   sock = activeSock
   activeSock.ev.on('creds.update', saveCreds)
 

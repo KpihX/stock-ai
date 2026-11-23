@@ -4,6 +4,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /wa
 COPY wa/package.json wa/tsconfig.json ./
+COPY wa/scripts ./scripts
 COPY wa/src ./src
 RUN npm install && npx tsc --noEmit
 
