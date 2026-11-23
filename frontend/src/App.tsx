@@ -13,6 +13,7 @@ import type {
   ClientAccount,
   ClientDetail,
   Command,
+  CommandDetail,
   IncomingCallState,
   ManagerAccount,
   PipelineLogItem,
@@ -379,14 +380,43 @@ function dateLabel(val?: string | null): string {
 
 function statusPillClass(status?: string): string {
   const s = String(status || "new").toLowerCase();
-  if (s === "processed" || s === "ok" || s === "sent") return "ok";
-  if (s === "rejected" || s === "cancelled") return "bad";
+  if (s === "processed" || s === "ok" || s === "sent" || s === "transcribed") return "ok";
+  if (s === "rejected" || s === "cancelled" || s === "error") return "bad";
   return "warn";
 }
 
 function statusLabel(status?: string): string {
   const s = String(status || "new").toLowerCase();
   return s === "processed" ? "approved" : s;
+}
+
+function sourceChannelLabel(channel?: string): string {
+  switch (String(channel || "").toLowerCase()) {
+    case "whatsapp_call":
+      return "WhatsApp Call";
+    case "simulated_call":
+      return "Simulated Call";
+    case "browser_call":
+      return "Browser Call";
+    case "whatsapp_voice":
+      return "WhatsApp Voice";
+    case "whatsapp_image":
+      return "WhatsApp Image";
+    case "whatsapp_text":
+      return "WhatsApp Text";
+    case "manual":
+      return "Manual Entry";
+    default:
+      return "WhatsApp";
+  }
+}
+
+function sourceChannelTone(channel?: string): string {
+  const ch = String(channel || "").toLowerCase();
+  if (ch.includes("call")) return "info";
+  if (ch === "whatsapp_voice" || ch === "whatsapp_image") return "warn";
+  if (ch === "manual") return "";
+  return "ok";
 }
 
 function loadPositions(): Record<string, { x: number; y: number }> {
@@ -508,8 +538,13 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
   const [activeCall, setActiveCall] = useState<IncomingCallState | null>(null);
   const [recentCalls, setRecentCalls] = useState<IncomingCallState[]>([]);
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [webrtcState, setWebrtcState] = useState<string>("idle");
   const [callBusy, setCallBusy] = useState(false);
+  const [waActionBusy, setWaActionBusy] = useState(false);
+  const [selectedCommandDetail, setSelectedCommandDetail] =
+    useState<CommandDetail | null>(null);
+  const [commandDetailLoading, setCommandDetailLoading] = useState(false);
   const callConfigRef = useRef<CallConfig | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -592,7 +627,8 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       setClients(clis);
       setLogs(pipe);
       if (callCfg) callConfigRef.current = callCfg;
-      setRecentCalls(callState.recent || []);
+      const callHistory = await api.getCallHistory(50).catch(() => null);
+      setRecentCalls(callHistory?.items?.length ? callHistory.items : callState.recent || []);
       if (callState.items?.length) {
         setActiveCall((curr) => curr || callState.items[0]);
       }
@@ -680,6 +716,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         if (item.event_type === "call.transcript") {
           const cid = String(event.call_id || "");
           const txt = String(event.text || "").trim();
+          const speaker =
+            String(event.speaker || "client").toLowerCase() === "manager"
+              ? "manager"
+              : "client";
           if (txt) {
             setActiveCall((curr) =>
               curr && curr.call_id === cid
@@ -689,7 +729,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                       ...curr.transcripts,
                       {
                         id: String(item.log_id),
-                        speaker: "client",
+                        speaker,
                         text: txt,
                         duration_ms: Number(event.duration_ms || 0),
                         ts: item.created_at,
@@ -802,12 +842,39 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         if (item.event_type === "whatsapp.updated") {
           void refreshWa(role);
         }
+        if (
+          [
+            "pipeline.error",
+            "llm.error",
+            "stt.error",
+            "ocr.error",
+            "call.error",
+            "call.commit_error",
+          ].includes(item.event_type)
+        ) {
+          const msg = item.message || `Pipeline error on ${item.node_id || item.event_type}`;
+          showToast(msg, true);
+          setTopBanner({
+            id: `${item.log_id}-${Date.now()}`,
+            badge: "Pipeline Error",
+            tone: "bad",
+            title: `${item.node_id || item.event_type}`,
+            description: msg,
+          });
+        } else if (
+          item.event_type === "pipeline.warning" ||
+          item.event_type === "command.rejected" ||
+          (item.event_type === "whatsapp.ack" &&
+            (item.status === "warn" || item.status === "error"))
+        ) {
+          showToast(item.message || "Pipeline warning", true);
+        }
       } catch {
         // ignore malformed event
       }
     };
     return () => source.close();
-  }, [refreshWa, role]);
+  }, [refreshWa, role, showToast]);
 
   useEffect(() => {
     const t = setInterval(async () => {
@@ -976,7 +1043,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         };
 
         pc.onconnectionstatechange = () => {
-          setWebrtcState(pc.connectionState || "connecting");
+          const st = pc.connectionState || "connecting";
+          setWebrtcState(st);
+          if (st === "failed" || st === "disconnected") {
+            showToast(`WebRTC audio ${st} — check network/UDP or hang up`, true);
+          }
         };
 
         const offer = await pc.createOffer();
@@ -1110,10 +1181,14 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   );
 
   const injectCallText = useCallback(
-    async (callId: string, text: string) => {
+    async (
+      callId: string,
+      text: string,
+      speaker: "client" | "manager" = "client",
+    ) => {
       try {
-        await api.injectCallText(callId, text);
-        showToast("Injected spoken phrase into active WebRTC call");
+        await api.injectCallText(callId, text, speaker);
+        showToast(`Injected ${speaker} speech into active WebRTC call`);
       } catch (err) {
         showToast(
           err instanceof Error ? err.message : "Failed to inject speech",
@@ -1123,6 +1198,45 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     },
     [showToast],
   );
+
+  const openCommandDetail = useCallback(
+    async (commandId: string) => {
+      if (!commandId) return;
+      setCommandDetailLoading(true);
+      try {
+        const detail = await api.getCommand(commandId);
+        setSelectedCommandDetail(detail);
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Unable to load command detail",
+          true,
+        );
+      } finally {
+        setCommandDetailLoading(false);
+      }
+    },
+    [showToast],
+  );
+
+  const openCallInDesk = useCallback((callId: string) => {
+    setSelectedCommandDetail(null);
+    setSelectedCallId(callId);
+    setPage("call");
+  }, []);
+
+  useEffect(() => {
+    if (
+      role !== "admin" ||
+      page !== "settings" ||
+      (wa.status !== "connecting" && wa.status !== "qr_pending")
+    ) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void refreshWa("admin");
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [page, refreshWa, role, wa.status]);
 
   const openClientProfile = useCallback(
     async (clientId: string) => {
@@ -1483,10 +1597,16 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             return (
               <tr
                 key={id}
-                className={flashCommandId === id ? "row-flash" : undefined}
+                className={`clickable-row${flashCommandId === id ? " row-flash" : ""}${selectedCommandDetail?.command.command_id === id ? " selected" : ""}`}
+                onClick={() => void openCommandDetail(id)}
               >
                 <td>
-                  <span className="mono">{id}</span>
+                  <div className="cmd-id-row">
+                    <span className="mono">{id}</span>
+                    <span className={`pill ${sourceChannelTone(cmd.source_channel)}`}>
+                      {sourceChannelLabel(cmd.source_channel)}
+                    </span>
+                  </div>
                   <span className="sub">{cmd.summary || "—"}</span>
                 </td>
                 <td>
@@ -1518,7 +1638,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                   </span>
                 </td>
                 {!compact && <td>{dateLabel(cmd.recorded_at)}</td>}
-                <td>
+                <td onClick={(e) => e.stopPropagation()}>
                   {editingCommandId === id ? (
                     <div className="decision-cell">
                       <div className="row-actions">
@@ -1734,7 +1854,9 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
               {theme === "dark" ? "Light mode" : "Dark mode"}
             </button>
             <span className="user-chip">
-              {username} · {role}
+              {username.toLowerCase() === role.toLowerCase()
+                ? username
+                : `${username} · ${role}`}
             </span>
             <button
               type="button"
@@ -2442,9 +2564,18 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                     </thead>
                     <tbody>
                       {clientDetail.commands.map((cmd) => (
-                        <tr key={cmd.command_id}>
+                        <tr
+                          key={cmd.command_id}
+                          className="clickable-row"
+                          onClick={() => void openCommandDetail(cmd.command_id)}
+                        >
                           <td>
-                            <span className="mono">{cmd.command_id}</span>
+                            <div className="cmd-id-row">
+                              <span className="mono">{cmd.command_id}</span>
+                              <span className={`pill ${sourceChannelTone(cmd.source_channel)}`}>
+                                {sourceChannelLabel(cmd.source_channel)}
+                              </span>
+                            </div>
                             <span className="sub">{cmd.summary || ""}</span>
                           </td>
                           <td>
@@ -2749,9 +2880,12 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             <CallPanel
               activeCall={activeCall}
               recentCalls={recentCalls}
+              selectedCallId={selectedCallId}
               webrtcState={webrtcState}
               callBusy={callBusy}
               clients={clients}
+              onSelectCall={(cid) => setSelectedCallId(cid)}
+              onInspectCommand={(cmdId) => void openCommandDetail(cmdId)}
               onAnswer={(cid) => void answerCall(cid)}
               onReject={(cid) => void rejectCall(cid)}
               onHangup={(cid) => void hangupCall(cid)}
@@ -2805,39 +2939,46 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                   <button
                     className="btn primary"
                     type="button"
+                    disabled={waActionBusy}
                     onClick={async () => {
+                      setWaActionBusy(true);
                       try {
-                        const shouldReset = wa.status !== "connected";
-                        await api.waConnect(shouldReset);
-                        showToast("QR refresh requested");
-                        for (const delay of [800, 2000, 4000, 7000]) {
-                          setTimeout(() => void refreshWa("admin"), delay);
-                        }
+                        setQrDataUrl("");
+                        setWa({ status: "connecting", phone: "", qr_ready: false });
+                        await api.waConnect(true);
+                        showToast("Fresh WhatsApp QR requested — waiting for pairing code...");
+                        await refreshWa("admin");
                       } catch (err) {
                         showToast(
                           err instanceof Error ? err.message : "QR request failed",
                           true,
                         );
+                      } finally {
+                        setWaActionBusy(false);
                       }
                     }}
                   >
-                    Generate / refresh QR
+                    {waActionBusy ? "Working..." : "Generate / refresh QR"}
                   </button>
                   <button
                     className="btn ghost"
                     type="button"
+                    disabled={waActionBusy}
                     onClick={async () => {
+                      setWaActionBusy(true);
                       try {
                         await api.waDisconnect();
                         setQrDataUrl("");
                         setWa({ status: "disconnected", phone: "", qr_ready: false });
                         showToast("WhatsApp disconnected");
-                        void refreshWa("admin");
+                        await refreshWa("admin");
                       } catch (err) {
                         showToast(
                           err instanceof Error ? err.message : "Disconnect failed",
                           true,
                         );
+                      } finally {
+                        setWaActionBusy(false);
                       }
                     }}
                   >
@@ -3042,6 +3183,212 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       </main>
 
       <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
+
+      {(selectedCommandDetail || commandDetailLoading) && (
+        <div
+          className="drawer-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSelectedCommandDetail(null)}
+        >
+          <aside
+            className="command-drawer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {commandDetailLoading && !selectedCommandDetail ? (
+              <p className="empty">Loading order provenance...</p>
+            ) : selectedCommandDetail ? (
+              <>
+                <div className="drawer-head">
+                  <div>
+                    <div className="cmd-id-row">
+                      <span className="mono" style={{ fontSize: 13 }}>
+                        {selectedCommandDetail.command.command_id}
+                      </span>
+                      <span
+                        className={`pill ${statusPillClass(selectedCommandDetail.command.status)}`}
+                      >
+                        {statusLabel(selectedCommandDetail.command.status)}
+                      </span>
+                      <span
+                        className={`pill ${sourceChannelTone(selectedCommandDetail.command.source_channel)}`}
+                      >
+                        {sourceChannelLabel(selectedCommandDetail.command.source_channel)}
+                      </span>
+                    </div>
+                    <h2 style={{ marginTop: 6 }}>
+                      {selectedCommandDetail.command.product_name ||
+                        selectedCommandDetail.command.product_id}{" "}
+                      · {qty(selectedCommandDetail.command.quantity)} unit(s)
+                    </h2>
+                    <p className="muted" style={{ fontSize: 13 }}>
+                      {selectedCommandDetail.command.client_name ||
+                        selectedCommandDetail.command.client_id}{" "}
+                      ({selectedCommandDetail.command.client_phone ||
+                        selectedCommandDetail.command.client_id}) ·{" "}
+                      {dateLabel(selectedCommandDetail.command.recorded_at)}
+                    </p>
+                  </div>
+                  <button
+                    className="btn ghost small"
+                    type="button"
+                    onClick={() => setSelectedCommandDetail(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="drawer-section">
+                  <div className="spec-label">Order &amp; Decision Details</div>
+                  <div className="meta-rows">
+                    <div className="meta-row">
+                      <span className="muted">Summary</span>
+                      <strong>{selectedCommandDetail.command.summary || "—"}</strong>
+                    </div>
+                    <div className="meta-row">
+                      <span className="muted">Unit price / Total</span>
+                      <strong>
+                        {money(selectedCommandDetail.command.price)} € ·{" "}
+                        {money(
+                          Number(selectedCommandDetail.command.price || 0) *
+                            Number(selectedCommandDetail.command.quantity || 0),
+                        )}{" "}
+                        €
+                      </strong>
+                    </div>
+                    <div className="meta-row">
+                      <span className="muted">Delivery date</span>
+                      <strong>{selectedCommandDetail.command.delivery_date || "—"}</strong>
+                    </div>
+                    {selectedCommandDetail.command.decided_by && (
+                      <div className="meta-row">
+                        <span className="muted">Decision</span>
+                        <strong>
+                          {selectedCommandDetail.command.decision_comment || "Approved/Rejected"} ·{" "}
+                          by {selectedCommandDetail.command.decided_by}
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="drawer-section">
+                  <div className="spec-label">Origin &amp; Provenance</div>
+                  <div className="meta-rows">
+                    <div className="meta-row">
+                      <span className="muted">Source channel</span>
+                      <strong>
+                        {sourceChannelLabel(selectedCommandDetail.command.source_channel)}
+                      </strong>
+                    </div>
+                    {selectedCommandDetail.command.source_call_id && (
+                      <div className="meta-row">
+                        <span className="muted">Call session</span>
+                        <div className="row-actions">
+                          <span className="mono">
+                            {selectedCommandDetail.command.source_call_id}
+                          </span>
+                          <button
+                            className="btn small ghost"
+                            type="button"
+                            onClick={() =>
+                              openCallInDesk(selectedCommandDetail.command.source_call_id || "")
+                            }
+                          >
+                            Open in Call Desk
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {selectedCommandDetail.command.source_evenement_id && (
+                      <div className="meta-row">
+                        <span className="muted">Signal / Event ID</span>
+                        <strong className="mono">
+                          {selectedCommandDetail.command.source_evenement_id}
+                        </strong>
+                      </div>
+                    )}
+                    {selectedCommandDetail.command.source_metadata &&
+                      Object.keys(selectedCommandDetail.command.source_metadata).length > 0 && (
+                        <div className="meta-row">
+                          <span className="muted">AI stack</span>
+                          <strong className="mono" style={{ fontSize: 12 }}>
+                            {String(
+                              selectedCommandDetail.command.source_metadata.llm_model || "nemotron",
+                            )}
+                          </strong>
+                        </div>
+                      )}
+                  </div>
+
+                  {selectedCommandDetail.command.source_raw_text && (
+                    <div className="spec-block" style={{ marginTop: 10 }}>
+                      <div className="spec-label">Captured raw source text / prompt input</div>
+                      <pre className="code-block compact">
+                        {selectedCommandDetail.command.source_raw_text}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+
+                {selectedCommandDetail.call_session && (
+                  <div className="drawer-section">
+                    <div className="spec-label">
+                      Linked call dialogue (Client &amp; Manager)
+                    </div>
+                    <div className="transcript compact-transcript">
+                      {selectedCommandDetail.call_session.transcripts.length === 0 ? (
+                        <p className="empty">No speech segments captured.</p>
+                      ) : (
+                        selectedCommandDetail.call_session.transcripts.map((t) => {
+                          const isMgr = t.speaker === "manager";
+                          return (
+                            <div
+                              key={t.id}
+                              className={`transcript-entry ${isMgr ? "manager" : "client"}`}
+                            >
+                              <span className="speaker">
+                                {isMgr
+                                  ? "Manager"
+                                  : selectedCommandDetail.command.client_name || "Client"}
+                              </span>
+                              <span className="text">{t.text}</span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {selectedCommandDetail.pipeline_logs.length > 0 && (
+                  <div className="drawer-section">
+                    <div className="spec-label">
+                      Pipeline execution trace ({selectedCommandDetail.pipeline_logs.length})
+                    </div>
+                    <div className="activity-list" style={{ maxHeight: 220 }}>
+                      {selectedCommandDetail.pipeline_logs.map((log) => (
+                        <div key={log.log_id} className="activity-item">
+                          <div className="activity-head">
+                            <span className="mono">
+                              {log.node_id || "pipeline"} · {log.event_type}
+                            </span>
+                            <span className={`pill ${statusPillClass(log.status)}`}>
+                              {statusLabel(log.status)}
+                            </span>
+                          </div>
+                          <div className="activity-body">{log.message}</div>
+                          <span className="sub">{dateLabel(log.created_at)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : null}
+          </aside>
+        </div>
+      )}
 
       {activeCall && (
         <div

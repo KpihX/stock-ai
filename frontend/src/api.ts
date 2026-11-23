@@ -4,6 +4,7 @@ import type {
   ClientDetail,
   ClientStats,
   Command,
+  CommandDetail,
   IncomingCallState,
   ManagerAccount,
   Paginated,
@@ -38,7 +39,11 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = 15000,
+): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -50,8 +55,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   let response: Response;
   try {
-    response = await fetch(`${BASE_URL}${path}`, { ...init, headers });
+    const signal = init.signal ?? AbortSignal.timeout(timeoutMs);
+    response = await fetch(`${BASE_URL}${path}`, { ...init, headers, signal });
   } catch (cause) {
+    if (
+      cause instanceof Error &&
+      (cause.name === "TimeoutError" || cause.name === "AbortError")
+    ) {
+      throw new ApiError(408, "Request timed out — server did not respond in time");
+    }
     const message = cause instanceof Error ? cause.message : "Network error";
     throw new ApiError(0, message);
   }
@@ -150,7 +162,7 @@ export const api = {
     ),
 
   getCommand: (id: string) =>
-    request<Command>(`/api/commands/${encodeURIComponent(id)}`),
+    request<CommandDetail>(`/api/commands/${encodeURIComponent(id)}`),
 
   approveCommand: (id: string, approve: boolean, comment = "") =>
     request<{
@@ -293,16 +305,28 @@ export const api = {
       "/api/calls/active",
     ),
 
+  getCallHistory: (limit = 30) =>
+    request<{ items: IncomingCallState[]; total: number }>(
+      `/api/calls/history?limit=${limit}`,
+    ),
+
+  getCallDetail: (callId: string) =>
+    request<IncomingCallState>(`/api/calls/${encodeURIComponent(callId)}`),
+
   acceptCall: (callId: string, sdpOffer: string) =>
     request<{
       call_id: string;
       status: string;
       sdp_answer: string;
       mode: string;
-    }>(`/api/calls/${encodeURIComponent(callId)}/accept`, {
-      method: "POST",
-      body: JSON.stringify({ sdp_offer: sdpOffer }),
-    }),
+    }>(
+      `/api/calls/${encodeURIComponent(callId)}/accept`,
+      {
+        method: "POST",
+        body: JSON.stringify({ sdp_offer: sdpOffer }),
+      },
+      25000,
+    ),
 
   rejectCall: (callId: string, reason = "declined") =>
     request<{ call_id: string; status: string }>(
@@ -338,17 +362,25 @@ export const api = {
     ),
 
   simulateCall: (phone: string, text: string) =>
-    request<IncomingCallState & { call_id: string }>("/api/calls/simulate", {
-      method: "POST",
-      body: JSON.stringify({ phone, text }),
-    }),
+    request<IncomingCallState & { call_id: string }>(
+      "/api/calls/simulate",
+      {
+        method: "POST",
+        body: JSON.stringify({ phone, text }),
+      },
+      25000,
+    ),
 
-  injectCallText: (callId: string, text: string) =>
-    request<{ call_id: string; samples: number }>(
+  injectCallText: (
+    callId: string,
+    text: string,
+    speaker: "client" | "manager" = "client",
+  ) =>
+    request<{ call_id: string; samples: number; speaker?: string }>(
       `/api/calls/${encodeURIComponent(callId)}/inject-text`,
       {
         method: "POST",
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, speaker }),
       },
     ),
 };

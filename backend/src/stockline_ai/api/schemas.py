@@ -34,12 +34,19 @@ class Command(BaseModel):
     decision_comment: str = ""
     decided_by: str = ""
     decided_at: datetime | None = None
+    source_channel: str = ""
+    source_call_id: str = ""
+    source_evenement_id: str = ""
+    source_raw_text: str = ""
+    source_metadata: dict = Field(default_factory=dict)
 
 
 class CommandDetail(BaseModel):
     command: Command
     order_lines: list[OrderLine]
     normalized_input: dict | None = None
+    call_session: dict | None = None
+    pipeline_logs: list[dict] = Field(default_factory=list)
 
 
 class ClientStats(BaseModel):

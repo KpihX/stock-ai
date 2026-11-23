@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from ..config import get_config as load_live_config
 from . import db
 from .auth import hash_password, require_admin, verify_token
+from .errors import sanitize_error
 from .events import BUS
 from .whats import _base_url
 
@@ -152,7 +153,7 @@ async def wa_qr(_: str = Depends(_admin)) -> dict[str, str]:
             return dict(response.json())
     except httpx.HTTPError as exc:
         raise HTTPException(
-            status_code=503, detail=f"WhatsApp listener unavailable: {exc}"
+            status_code=503, detail=f"WhatsApp listener unavailable: {sanitize_error(exc)}"
         ) from exc
 
 
@@ -167,7 +168,7 @@ async def wa_connect(
             data = dict(response.json())
     except httpx.HTTPError as exc:
         raise HTTPException(
-            status_code=503, detail=f"WhatsApp listener unavailable: {exc}"
+            status_code=503, detail=f"WhatsApp listener unavailable: {sanitize_error(exc)}"
         ) from exc
     await BUS.publish({"type": "whatsapp.updated", "status": data.get("status", "connecting")})
     return data
@@ -182,7 +183,7 @@ async def wa_disconnect(_: str = Depends(_admin)) -> dict[str, str]:
             data = dict(response.json())
     except httpx.HTTPError as exc:
         raise HTTPException(
-            status_code=503, detail=f"WhatsApp listener unavailable: {exc}"
+            status_code=503, detail=f"WhatsApp listener unavailable: {sanitize_error(exc)}"
         ) from exc
     await BUS.publish({"type": "whatsapp.updated", "status": "disconnected"})
     return data

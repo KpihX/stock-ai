@@ -27,24 +27,74 @@ ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env", override=False)
 
 FIRST_NAMES = [
-    "Yohann", "Alice", "Karim", "Sofia", "Mehdi", "Claire", "Lucas", "Nadia",
-    "Hugo", "Ines", "Thomas", "Leila", "Paul", "Emma", "Noah", "Sarah",
+    "Yohann",
+    "Alice",
+    "Karim",
+    "Sofia",
+    "Mehdi",
+    "Claire",
+    "Lucas",
+    "Nadia",
+    "Hugo",
+    "Ines",
+    "Thomas",
+    "Leila",
+    "Paul",
+    "Emma",
+    "Noah",
+    "Sarah",
 ]
 LAST_NAMES = [
-    "Bikele", "Martin", "Bernard", "Diallo", "Petit", "Robert", "Richard",
-    "Durand", "Moreau", "Simon", "Laurent", "Lefebvre", "Michel", "Garcia",
+    "Bikele",
+    "Martin",
+    "Bernard",
+    "Diallo",
+    "Petit",
+    "Robert",
+    "Richard",
+    "Durand",
+    "Moreau",
+    "Simon",
+    "Laurent",
+    "Lefebvre",
+    "Michel",
+    "Garcia",
 ]
 BUSINESS_NAMES = [
-    "Le Cedar Room", "Harbor Kitchen", "North Pier Grill", "Maison Verte",
-    "Bistro du Port", "La Table Rase", "Cantine Solaire", "Le Comptoir",
-    "Chez Nino", "Les Halles", "Le Panier Bleu", "Rive Gauche",
+    "Le Cedar Room",
+    "Harbor Kitchen",
+    "North Pier Grill",
+    "Maison Verte",
+    "Bistro du Port",
+    "La Table Rase",
+    "Cantine Solaire",
+    "Le Comptoir",
+    "Chez Nino",
+    "Les Halles",
+    "Le Panier Bleu",
+    "Rive Gauche",
 ]
 PRODUCT_NAMES = [
-    "Tomates grappe", "Cabillaud 3/5", "Saumon 12", "Crevettes 30/40",
-    "Pommes de terre", "Oignons jaunes", "Carottes", "Courgettes",
-    "Poulet fermier", "Boeuf haché", "Mozzarella", "Parmesan",
-    "Huile d'olive", "Riz basmati", "Pâtes penne", "Farine T55",
-    "Beurre doux", "Crème fraîche", "Citrons", "Basilic frais",
+    "Tomates grappe",
+    "Cabillaud 3/5",
+    "Saumon 12",
+    "Crevettes 30/40",
+    "Pommes de terre",
+    "Oignons jaunes",
+    "Carottes",
+    "Courgettes",
+    "Poulet fermier",
+    "Boeuf haché",
+    "Mozzarella",
+    "Parmesan",
+    "Huile d'olive",
+    "Riz basmati",
+    "Pâtes penne",
+    "Farine T55",
+    "Beurre doux",
+    "Crème fraîche",
+    "Citrons",
+    "Basilic frais",
 ]
 
 
@@ -84,7 +134,11 @@ async def main() -> None:
             while value in phones:
                 value = phone(rng)
             phones.add(value)
-            name = rng.choice(BUSINESS_NAMES) if rng.random() < 0.6 else f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}"
+            name = (
+                rng.choice(BUSINESS_NAMES)
+                if rng.random() < 0.6
+                else f"{rng.choice(FIRST_NAMES)} {rng.choice(LAST_NAMES)}"
+            )
             clients.append((f"CLI-R-{index + 1:03d}", value, name))
         await conn.executemany(
             "INSERT INTO client(client_id, phone_number, client_name) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
@@ -106,7 +160,9 @@ async def main() -> None:
         for _ in range(args.commands):
             client_id = rng.choice(clients)[0]
             product_id, product_name, price, _stock = rng.choice(products)
-            recorded_at = datetime.now(UTC) - timedelta(days=rng.randint(0, 45), hours=rng.randint(0, 23))
+            recorded_at = datetime.now(UTC) - timedelta(
+                days=rng.randint(0, 45), hours=rng.randint(0, 23)
+            )
             quantity = float(rng.randint(1, 12))
             commands.append(
                 (

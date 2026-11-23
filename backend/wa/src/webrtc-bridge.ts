@@ -216,6 +216,7 @@ export class WebRtcCallBridge {
   private readonly encoder: OpusScript
   private readonly decoder: OpusScript
   private readonly vad: VadUtteranceSegmenter
+  private readonly managerVad: VadUtteranceSegmenter | null
   private readonly outboundQueue: Float32Array[] = []
   private readonly maxOutboundChunks = 10 // ~200 ms at 20 ms/chunk
   private readonly ssrc = randomInt(100_000, 0x7fffffff)
@@ -240,7 +241,12 @@ export class WebRtcCallBridge {
     connectionState: 'new',
   }
 
-  constructor(callId: string, cfg: BridgeConfig, onUtterance: UtteranceHandler) {
+  constructor(
+    callId: string,
+    cfg: BridgeConfig,
+    onUtterance: UtteranceHandler,
+    onManagerUtterance?: UtteranceHandler
+  ) {
     this.callId = callId
     this.cfg = cfg
     this.encoder = new OpusScript(48000, 1, OpusScript.Application.VOIP)
@@ -252,6 +258,15 @@ export class WebRtcCallBridge {
       cfg.vadMaxUtteranceMs,
       onUtterance
     )
+    this.managerVad = onManagerUtterance
+      ? new VadUtteranceSegmenter(
+          cfg.sampleRate,
+          cfg.vadRmsThreshold,
+          cfg.vadSilenceMs,
+          cfg.vadMaxUtteranceMs,
+          onManagerUtterance
+        )
+      : null
   }
 
   setMuted(muted: boolean): void {
@@ -410,12 +425,14 @@ export class WebRtcCallBridge {
 
   flushVad(): void {
     this.vad.flush()
+    this.managerVad?.flush()
   }
 
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
     this.vad.flush()
+    this.managerVad?.flush()
     await this.closePeerOnly()
     this.outboundQueue.length = 0
     try {
@@ -460,6 +477,9 @@ export class WebRtcCallBridge {
         for (let i = 0; i < this.cfg.framesPerChunk; i++) {
           const b = i * 3
           out16[i] = (block[b] + block[b + 1] + block[b + 2]) / 3
+        }
+        if (!this.muted && this.managerVad) {
+          this.managerVad.push(out16)
         }
         if (this.outboundQueue.length >= this.maxOutboundChunks) {
           this.outboundQueue.shift()

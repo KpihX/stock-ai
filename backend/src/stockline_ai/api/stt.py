@@ -16,6 +16,7 @@ from typing import Any
 import riva.client
 
 from ..config import Config, get_config
+from .errors import sanitize_error
 
 
 def _riva_recognize_sync(
@@ -69,16 +70,20 @@ async def _run_nvidia_riva(
     if not function_id or not uri:
         raise RuntimeError(f"Missing base_url/function_id for STT provider '{provider_key}'")
 
+    timeout_s = float(cfg.provider_param("stt", provider_key, "timeout_seconds", 30.0))
     audio_bytes = wav_path.read_bytes()
-    transcript = await asyncio.to_thread(
-        _riva_recognize_sync,
-        audio_bytes,
-        uri,
-        function_id,
-        api_key,
-        language,
-        sample_rate,
-        punctuation,
+    transcript = await asyncio.wait_for(
+        asyncio.to_thread(
+            _riva_recognize_sync,
+            audio_bytes,
+            uri,
+            function_id,
+            api_key,
+            language,
+            sample_rate,
+            punctuation,
+        ),
+        timeout=timeout_s,
     )
     return {
         "text": transcript,
@@ -103,6 +108,7 @@ async def _run_local_whisper(
     model_path = cfg.stt_models_dir / model_name
     vocab = ", ".join(product_names)
     prompt = f"{base_prompt} Catalogue : {vocab}.".strip() if vocab else base_prompt
+    timeout_s = float(cfg.provider_param("stt", "whisper", "timeout_seconds", 45.0))
     proc = await asyncio.create_subprocess_exec(
         whisper_bin,
         "-m",
@@ -118,7 +124,12 @@ async def _run_local_whisper(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out, err = await proc.communicate()
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.wait()
+        raise TimeoutError(f"whisper-cli timed out after {timeout_s:.0f}s") from exc
     transcript = " ".join(out.decode(errors="ignore").split()).strip()
     return {
         "text": transcript,
@@ -161,21 +172,23 @@ async def transcribe_wav(
     try:
         return await _dispatch_wav(wav_path, primary, product_names, active_cfg)
     except Exception as exc:
+        clean_err = sanitize_error(exc)
         fallback = active_cfg.fallback_for("stt")
         if fallback and fallback != primary:
             try:
                 res = await _dispatch_wav(wav_path, fallback, product_names, active_cfg)
                 res["fallback_from"] = primary
-                res["primary_error"] = str(exc)
+                res["primary_error"] = clean_err
                 return res
             except Exception as fb_exc:
                 return {
                     "text": "",
                     "provider": fallback,
                     "fallback_from": primary,
-                    "error": f"{exc} | fallback {fallback}: {fb_exc}",
+                    "primary_error": clean_err,
+                    "error": f"{clean_err} | fallback {fallback}: {sanitize_error(fb_exc)}",
                 }
-        return {"text": "", "provider": primary, "error": str(exc)}
+        return {"text": "", "provider": primary, "error": clean_err}
 
 
 async def convert_to_wav16k(

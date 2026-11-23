@@ -31,6 +31,19 @@ export interface Command {
   decided_at?: string | null;
   approved?: boolean | null;
   order_lines?: OrderLine[];
+  source_channel?: string;
+  source_call_id?: string;
+  source_evenement_id?: string;
+  source_raw_text?: string;
+  source_metadata?: Record<string, unknown>;
+}
+
+export interface CommandDetail {
+  command: Command;
+  order_lines: OrderLine[];
+  normalized_input?: Record<string, unknown> | null;
+  call_session?: IncomingCallState | null;
+  pipeline_logs: PipelineLogItem[];
 }
 
 export interface Product {
@@ -114,7 +127,8 @@ export interface ClientStats {
 
 export interface CallTranscriptEntry {
   id: string;
-  speaker: "client" | "system" | "assistant";
+  seq?: number;
+  speaker: "client" | "manager" | "system" | "assistant";
   text: string;
   duration_ms?: number;
   ts: string;
@@ -129,9 +143,14 @@ export interface IncomingCallState {
   status: "ringing" | "active" | "ended" | "rejected";
   mode: string;
   started_at: string;
-  muted: boolean;
+  ended_at?: string | null;
+  reason?: string;
+  muted?: boolean;
   committed: boolean;
+  command_id?: string;
   transcripts: CallTranscriptEntry[];
+  linked_commands?: Command[];
+  stats?: Record<string, unknown>;
 }
 
 export interface CallConfig {

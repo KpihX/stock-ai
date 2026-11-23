@@ -127,32 +127,60 @@ export class VoipBridgeManager {
       throw new Error(`Call not found: ${callId}`)
     }
 
-    const sdpAnswer = await entry.bridge.acceptOffer(sdpOffer)
-    entry.status = 'active'
-
-    if (entry.mode === 'baileys_voip' && entry.session && this.voip) {
-      await this.voip.acceptCall(callId, {
-        audioSource: 'silence',
-        isMicEnabled: true,
-        isCameraEnabled: false,
-      })
-    } else if (entry.mode === 'simulation' && entry.simSamples16k && entry.simSamples16k.length > 0) {
-      this.startSimPlayback(entry, entry.simSamples16k)
+    const withTimeout = async <T>(p: Promise<T>, ms: number, label: string): Promise<T> => {
+      let timer: NodeJS.Timeout | null = null
+      try {
+        return await Promise.race([
+          p,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+          }),
+        ])
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
     }
 
-    void this.postCallWebhook({
-      event: 'call.state',
-      call_id: callId,
-      from: entry.from,
-      status: 'active',
-      mode: entry.mode,
-    })
+    try {
+      const sdpAnswer = await withTimeout(entry.bridge.acceptOffer(sdpOffer), 10_000, 'WebRTC acceptOffer')
+      entry.status = 'active'
 
-    return {
-      call_id: callId,
-      status: 'active',
-      sdp_answer: sdpAnswer,
-      mode: entry.mode,
+      if (entry.mode === 'baileys_voip' && entry.session && this.voip) {
+        await withTimeout(
+          this.voip.acceptCall(callId, {
+            audioSource: 'silence',
+            isMicEnabled: true,
+            isCameraEnabled: false,
+          }),
+          12_000,
+          'WhatsApp acceptCall'
+        )
+      } else if (entry.mode === 'simulation' && entry.simSamples16k && entry.simSamples16k.length > 0) {
+        this.startSimPlayback(entry, entry.simSamples16k)
+      }
+
+      void this.postCallWebhook({
+        event: 'call.state',
+        call_id: callId,
+        from: entry.from,
+        status: 'active',
+        mode: entry.mode,
+      })
+
+      return {
+        call_id: callId,
+        status: 'active',
+        sdp_answer: sdpAnswer,
+        mode: entry.mode,
+      }
+    } catch (err) {
+      void this.postCallWebhook({
+        event: 'call.error',
+        call_id: callId,
+        from: entry.from,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      throw err
     }
   }
 
@@ -204,9 +232,16 @@ export class VoipBridgeManager {
     const callId = opts.callId || `SIM-${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`
     const from = this.resolvePhone(opts.from)
     const simSamples16k = opts.wavBase64 ? decodeWav16kMono(Buffer.from(opts.wavBase64, 'base64')) : undefined
-    const bridge = new WebRtcCallBridge(callId, this.cfg, (wav, durationMs) => {
-      void this.emitUtterance(callId, from, wav, durationMs)
-    })
+    const bridge = new WebRtcCallBridge(
+      callId,
+      this.cfg,
+      (wav, durationMs) => {
+        void this.emitUtterance(callId, from, wav, durationMs, 'client')
+      },
+      (wav, durationMs) => {
+        void this.emitUtterance(callId, from, wav, durationMs, 'manager')
+      }
+    )
 
     const entry: ManagedCall = {
       callId,
@@ -235,14 +270,24 @@ export class VoipBridgeManager {
     return this.listCalls().find((c) => c.call_id === callId)!
   }
 
-  injectCallerAudio(callId: string, wavBase64: string): { call_id: string; samples: number } {
+  injectCallerAudio(
+    callId: string,
+    wavBase64: string,
+    speaker: 'client' | 'manager' = 'client'
+  ): { call_id: string; samples: number; speaker: string } {
     const entry = this.calls.get(callId)
     if (!entry) {
       throw new Error(`Call not found: ${callId}`)
     }
-    const samples = decodeWav16kMono(Buffer.from(wavBase64, 'base64'))
+    const buf = Buffer.from(wavBase64, 'base64')
+    const samples = decodeWav16kMono(buf)
+    if (speaker === 'manager') {
+      const durationMs = Math.round((samples.length / this.cfg.sampleRate) * 1000)
+      void this.emitUtterance(callId, entry.from, buf, durationMs, 'manager')
+      return { call_id: callId, samples: samples.length, speaker: 'manager' }
+    }
     this.startSimPlayback(entry, samples)
-    return { call_id: callId, samples: samples.length }
+    return { call_id: callId, samples: samples.length, speaker: 'client' }
   }
 
   private async handleIncomingWhatsAppCall(session: any): Promise<void> {
@@ -253,9 +298,16 @@ export class VoipBridgeManager {
 
     console.log(`[voip] incoming WhatsApp call ${callId} from ${from} (${rawFrom})`)
 
-    const bridge = new WebRtcCallBridge(callId, this.cfg, (wav, durationMs) => {
-      void this.emitUtterance(callId, from, wav, durationMs)
-    })
+    const bridge = new WebRtcCallBridge(
+      callId,
+      this.cfg,
+      (wav, durationMs) => {
+        void this.emitUtterance(callId, from, wav, durationMs, 'client')
+      },
+      (wav, durationMs) => {
+        void this.emitUtterance(callId, from, wav, durationMs, 'manager')
+      }
+    )
 
     const entry: ManagedCall = {
       callId,
@@ -401,11 +453,18 @@ export class VoipBridgeManager {
     })
   }
 
-  private async emitUtterance(callId: string, from: string, wav: Buffer, durationMs: number): Promise<void> {
+  private async emitUtterance(
+    callId: string,
+    from: string,
+    wav: Buffer,
+    durationMs: number,
+    speaker: 'client' | 'manager' = 'client'
+  ): Promise<void> {
     await this.postCallWebhook({
       event: 'call.utterance',
       call_id: callId,
       from,
+      speaker,
       duration_ms: durationMs,
       wav_base64: wav.toString('base64'),
     })
@@ -415,6 +474,7 @@ export class VoipBridgeManager {
     try {
       const response = await fetch(`${this.apiUrl}/webhooks/call`, {
         method: 'POST',
+        signal: AbortSignal.timeout(8000),
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })

@@ -42,6 +42,7 @@
       "language": "fr",
       "sample_rate": 16000,
       "punctuation": true,
+      "timeout_seconds": 30.0,
       "fallback": "nvidia_parakeet",
       "bin": "whisper-cli",
       "models_dir": "/app/models/whisper",
@@ -63,7 +64,8 @@
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
       "base_url": "https://integrate.api.nvidia.com/v1",
       "temperature": 0,
-      "max_tokens": 4000
+      "max_tokens": 4000,
+      "timeout_seconds": 45.0
     }
   },
 

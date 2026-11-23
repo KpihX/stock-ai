@@ -19,6 +19,7 @@ from ..config import validate_startup
 from ..version import get_version
 from . import admin, calls, db, stt, whats
 from .auth import check_credentials, create_token, get_claims, verify_token
+from .errors import sanitize_error
 from .events import BUS
 from .pipeline import handle_signal, publish, set_event_bus
 from .schemas import (
@@ -54,8 +55,22 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(_request: Request, exc: Exception) -> JSONResponse:
-    # Keep unhandled errors inside CORSMiddleware so browsers never see a generic "Failed to fetch".
-    return JSONResponse(status_code=500, content={"detail": str(exc) or "Internal server error"})
+    # Keep unhandled errors inside CORSMiddleware and redact any secret fragments.
+    return JSONResponse(status_code=500, content={"detail": sanitize_error(exc)})
+
+
+def _spawn_signal_task(sig: Signal) -> asyncio.Task[dict[str, Any]]:
+    task = asyncio.create_task(handle_signal(sig))
+
+    def _on_done(done_task: asyncio.Task[dict[str, Any]]) -> None:
+        if done_task.cancelled():
+            return
+        exc = done_task.exception()
+        if exc is not None:
+            print(f"[pipeline] unhandled task error: {sanitize_error(exc)}", flush=True)
+
+    task.add_done_callback(_on_done)
+    return task
 
 
 app.include_router(admin.router)
@@ -109,7 +124,7 @@ async def whatsapp_webhook(payload: dict[str, Any]) -> dict[str, str]:
         message_id=str(payload.get("message_id", "")),
         media_path=str(payload.get("media_path", "")),
     )
-    asyncio.create_task(handle_signal(signal))
+    _spawn_signal_task(signal)
     return {"status": "accepted"}
 
 
@@ -222,7 +237,14 @@ async def command_detail(command_id: str, _: str = Depends(verify_token)) -> Com
     row = await db.fetch_command(command_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Command not found")
-    lines = await db.fetch_recent_commands(row["client_id"], 10)
+    lines = await db.fetch_recent_commands(row["client_id"], 20)
+    call_id = str(row.get("source_call_id") or "")
+    call_session = await db.fetch_call_session(call_id) if call_id else None
+    logs = await db.fetch_pipeline_logs_for_command(
+        command_id,
+        str(row.get("source_evenement_id") or ""),
+        call_id,
+    )
     return CommandDetail(
         command=Command(**row),
         order_lines=[
@@ -238,6 +260,8 @@ async def command_detail(command_id: str, _: str = Depends(verify_token)) -> Com
             for line in lines
             if line["command_id"] == command_id
         ],
+        call_session=call_session,
+        pipeline_logs=logs,
     )
 
 
@@ -290,7 +314,7 @@ async def approve_command(
             await whats.send_ack(phone, wa_text)
             wa_sent = True
         except Exception as exc:
-            wa_error = str(exc)
+            wa_error = sanitize_error(exc)
 
     await publish(
         {
@@ -395,6 +419,14 @@ async def call_socket(websocket: WebSocket, call_id: str) -> None:
                 tmp = Path("/tmp") / f"call_{call_id}_{len(transcript)}.webm"
                 tmp.write_bytes(raw)
                 res = await stt.transcribe_media(str(tmp), [])
+                if res.get("error"):
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "error": sanitize_error(str(res["error"])),
+                            "call_id": call_id,
+                        }
+                    )
                 text = str(res.get("text") or "").strip()
                 if text:
                     transcript.append(text)
@@ -411,7 +443,7 @@ async def call_socket(websocket: WebSocket, call_id: str) -> None:
                     modality="audio",
                     texte=full_text,
                 )
-                asyncio.create_task(handle_signal(sig))
+                _spawn_signal_task(sig)
     except WebSocketDisconnect:
         if transcript:
             full_text = " ".join(transcript).strip()
@@ -425,5 +457,5 @@ async def call_socket(websocket: WebSocket, call_id: str) -> None:
                 modality="audio",
                 texte=full_text,
             )
-            asyncio.create_task(handle_signal(sig))
+            _spawn_signal_task(sig)
         return

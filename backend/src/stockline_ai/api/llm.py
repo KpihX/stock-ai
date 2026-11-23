@@ -14,6 +14,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_tool_union_param import ChatCompletionToolUnionParam
 
 from ..config import get_config
+from .errors import sanitize_error
 
 TOOLS: list[ChatCompletionToolUnionParam] = [
     {
@@ -65,9 +66,12 @@ def _system_prompt() -> str:
 
 def _client() -> AsyncOpenAI:
     cfg = get_config()
+    timeout_s = float(cfg.param("agent_llm", "timeout_seconds", "45.0"))
     return AsyncOpenAI(
         base_url=cfg.base_url_for("agent_llm"),
         api_key=cfg.api_key("agent_llm", required=True),
+        timeout=timeout_s,
+        max_retries=1,
     )
 
 
@@ -137,7 +141,12 @@ async def normalize(
         message = response.choices[0].message
         if not message.tool_calls:
             raw_content = message.content or "{}"
-            parsed = _parse_json(raw_content)
+            try:
+                parsed = _parse_json(raw_content)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"Invalid JSON from {model_name}: {sanitize_error(exc)}"
+                ) from exc
             if event_logger is not None:
                 await event_logger(
                     {

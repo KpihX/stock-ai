@@ -16,6 +16,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from ..config import Config, get_config
+from .errors import sanitize_error
 
 
 def _detect_mime(raw: bytes, path: Path) -> str:
@@ -89,6 +90,7 @@ async def _run_tesseract(path: Path, cfg: Config) -> dict[str, Any]:
     t0 = time.perf_counter()
     ocr_bin = str(cfg.provider_param("ocr", "tesseract", "bin", "tesseract"))
     langs = str(cfg.provider_param("ocr", "tesseract", "languages", "eng+fra"))
+    timeout_s = float(cfg.provider_param("ocr", "tesseract", "timeout_seconds", 30.0))
     proc = await asyncio.create_subprocess_exec(
         ocr_bin,
         str(path),
@@ -98,7 +100,12 @@ async def _run_tesseract(path: Path, cfg: Config) -> dict[str, Any]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    out, err = await proc.communicate()
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.wait()
+        raise TimeoutError(f"tesseract timed out after {timeout_s:.0f}s") from exc
     extracted = " ".join(out.decode(errors="ignore").split()).strip()
     return {
         "ocr_raw": extracted,
@@ -147,13 +154,23 @@ async def extract_image_text(
     try:
         res = await _dispatch_ocr(path, primary, names, active_cfg)
     except Exception as exc:
+        clean_err = sanitize_error(exc)
         fallback = active_cfg.fallback_for("ocr")
         if fallback and fallback != primary:
-            res = await _dispatch_ocr(path, fallback, names, active_cfg)
-            res["fallback_from"] = primary
-            res["primary_error"] = str(exc)
+            try:
+                res = await _dispatch_ocr(path, fallback, names, active_cfg)
+                res["fallback_from"] = primary
+                res["primary_error"] = clean_err
+            except Exception as fb_exc:
+                return {
+                    "text": clean_caption,
+                    "provider": fallback,
+                    "fallback_from": primary,
+                    "primary_error": clean_err,
+                    "error": f"{clean_err} | fallback {fallback}: {sanitize_error(fb_exc)}",
+                }
         else:
-            return {"text": clean_caption, "provider": primary, "error": str(exc)}
+            return {"text": clean_caption, "provider": primary, "error": clean_err}
 
     extracted = str(res.get("ocr_raw", "")).strip()
     combined = (

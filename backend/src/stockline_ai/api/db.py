@@ -47,7 +47,30 @@ CREATE TABLE IF NOT EXISTS command (
 ALTER TABLE command ADD COLUMN IF NOT EXISTS decision_comment TEXT NOT NULL DEFAULT '';
 ALTER TABLE command ADD COLUMN IF NOT EXISTS decided_by TEXT NOT NULL DEFAULT '';
 ALTER TABLE command ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ;
+ALTER TABLE command ADD COLUMN IF NOT EXISTS source_channel TEXT NOT NULL DEFAULT '';
+ALTER TABLE command ADD COLUMN IF NOT EXISTS source_call_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE command ADD COLUMN IF NOT EXISTS source_evenement_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE command ADD COLUMN IF NOT EXISTS source_raw_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE command ADD COLUMN IF NOT EXISTS source_metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 CREATE INDEX IF NOT EXISTS command_client_idx ON command(client_id);
+CREATE INDEX IF NOT EXISTS command_call_idx ON command(source_call_id);
+CREATE TABLE IF NOT EXISTS call_session (
+    call_id TEXT PRIMARY KEY,
+    phone_number TEXT NOT NULL DEFAULT '',
+    client_id TEXT NOT NULL DEFAULT '',
+    client_name TEXT NOT NULL DEFAULT '',
+    known_client BOOLEAN NOT NULL DEFAULT FALSE,
+    mode TEXT NOT NULL DEFAULT 'baileys_voip',
+    status TEXT NOT NULL DEFAULT 'ringing',
+    reason TEXT NOT NULL DEFAULT '',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at TIMESTAMPTZ,
+    command_id TEXT NOT NULL DEFAULT '',
+    committed BOOLEAN NOT NULL DEFAULT FALSE,
+    transcripts JSONB NOT NULL DEFAULT '[]'::jsonb,
+    stats JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS call_session_started_idx ON call_session(started_at DESC);
 CREATE TABLE IF NOT EXISTS pipeline_log (
     log_id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -182,6 +205,9 @@ async def create_manual_command(
             "quantity": float(quantity),
             "status": "new",
             "summary": note,
+            "source_channel": "manual",
+            "source_raw_text": note,
+            "source_metadata": {"origin": "admin_ui"},
         }
     )
     row = await fetch_command(command_id)
@@ -282,19 +308,38 @@ async def fetch_client_stats(client_id: str) -> dict[str, Any]:
     }
 
 
+def _decode_json_field(val: Any, default: Any) -> Any:
+    if val is None:
+        return default
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except json.JSONDecodeError:
+            return default
+    return val
+
+
+def _normalize_command_row(row: Any) -> dict[str, Any]:
+    item = dict(row)
+    item["source_metadata"] = _decode_json_field(item.get("source_metadata"), {})
+    return item
+
+
 async def fetch_recent_commands(client_id: str, limit: int = 5) -> list[dict[str, Any]]:
     rows = await pool().fetch(
         """SELECT c.command_id, c.client_id, c.product_id,
                   COALESCE(p.product_name, c.product_id) AS product_name,
                   c.recorded_at, c.delivery_date, c.price, c.quantity, c.status, c.summary,
-                  c.decision_comment, c.decided_by, c.decided_at
+                  c.decision_comment, c.decided_by, c.decided_at,
+                  c.source_channel, c.source_call_id, c.source_evenement_id,
+                  c.source_raw_text, c.source_metadata
            FROM command c
            LEFT JOIN product p ON p.product_id = c.product_id
            WHERE c.client_id = $1 ORDER BY c.recorded_at DESC LIMIT $2""",
         client_id,
         limit,
     )
-    return [dict(r) for r in rows]
+    return [_normalize_command_row(r) for r in rows]
 
 
 async def fetch_commands(limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
@@ -303,6 +348,8 @@ async def fetch_commands(limit: int = 50, offset: int = 0) -> list[dict[str, Any
                   COALESCE(p.product_name, c.product_id) AS product_name,
                   c.recorded_at, c.delivery_date, c.price, c.quantity, c.status, c.summary,
                   c.decision_comment, c.decided_by, c.decided_at,
+                  c.source_channel, c.source_call_id, c.source_evenement_id,
+                  c.source_raw_text, c.source_metadata,
                   cl.client_name, cl.phone_number AS client_phone,
                   COUNT(*) OVER (PARTITION BY c.client_id) AS client_order_count
            FROM command c
@@ -312,7 +359,7 @@ async def fetch_commands(limit: int = 50, offset: int = 0) -> list[dict[str, Any
         limit,
         offset,
     )
-    return [dict(r) for r in rows]
+    return [_normalize_command_row(r) for r in rows]
 
 
 async def fetch_command(command_id: str) -> dict[str, Any] | None:
@@ -321,6 +368,8 @@ async def fetch_command(command_id: str) -> dict[str, Any] | None:
                   COALESCE(p.product_name, c.product_id) AS product_name,
                   c.recorded_at, c.delivery_date, c.price, c.quantity, c.status, c.summary,
                   c.decision_comment, c.decided_by, c.decided_at,
+                  c.source_channel, c.source_call_id, c.source_evenement_id,
+                  c.source_raw_text, c.source_metadata,
                   cl.client_name, cl.phone_number AS client_phone,
                   (
                       SELECT COUNT(*) FROM command c2 WHERE c2.client_id = c.client_id
@@ -331,15 +380,37 @@ async def fetch_command(command_id: str) -> dict[str, Any] | None:
            WHERE c.command_id = $1""",
         command_id,
     )
-    return dict(row) if row else None
+    return _normalize_command_row(row) if row else None
+
+
+async def fetch_commands_by_call(call_id: str) -> list[dict[str, Any]]:
+    if not call_id:
+        return []
+    rows = await pool().fetch(
+        """SELECT c.command_id, c.client_id, c.product_id,
+                  COALESCE(p.product_name, c.product_id) AS product_name,
+                  c.recorded_at, c.delivery_date, c.price, c.quantity, c.status, c.summary,
+                  c.decision_comment, c.decided_by, c.decided_at,
+                  c.source_channel, c.source_call_id, c.source_evenement_id,
+                  c.source_raw_text, c.source_metadata,
+                  cl.client_name, cl.phone_number AS client_phone
+           FROM command c
+           JOIN client cl ON cl.client_id = c.client_id
+           LEFT JOIN product p ON p.product_id = c.product_id
+           WHERE c.source_call_id = $1
+           ORDER BY c.recorded_at DESC""",
+        call_id,
+    )
+    return [_normalize_command_row(r) for r in rows]
 
 
 async def insert_command(data: dict[str, Any]) -> None:
     await pool().execute(
         """INSERT INTO command
            (command_id, client_id, recorded_at, delivery_date,
-            product_id, price, quantity, status, summary)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            product_id, price, quantity, status, summary,
+            source_channel, source_call_id, source_evenement_id, source_raw_text, source_metadata)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
            ON CONFLICT (command_id) DO NOTHING""",
         data["command_id"],
         data["client_id"],
@@ -350,7 +421,147 @@ async def insert_command(data: dict[str, Any]) -> None:
         data["quantity"],
         data.get("status", "new"),
         data.get("summary", ""),
+        str(data.get("source_channel", "")),
+        str(data.get("source_call_id", "")),
+        str(data.get("source_evenement_id", "")),
+        str(data.get("source_raw_text", "")),
+        json.dumps(data.get("source_metadata") or {}, ensure_ascii=False, default=str),
     )
+
+
+async def upsert_call_session(record: dict[str, Any]) -> None:
+    started = record.get("started_at")
+    if isinstance(started, str) and started.strip():
+        started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+    elif isinstance(started, datetime):
+        started_dt = started
+    else:
+        started_dt = datetime.now(UTC)
+
+    ended = record.get("ended_at")
+    ended_dt: datetime | None = None
+    if isinstance(ended, str) and ended.strip():
+        ended_dt = datetime.fromisoformat(ended.replace("Z", "+00:00"))
+    elif isinstance(ended, datetime):
+        ended_dt = ended
+
+    await pool().execute(
+        """INSERT INTO call_session
+           (call_id, phone_number, client_id, client_name, known_client, mode,
+            status, reason, started_at, ended_at, command_id, committed, transcripts, stats)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb)
+           ON CONFLICT (call_id) DO UPDATE SET
+               phone_number = EXCLUDED.phone_number,
+               client_id = EXCLUDED.client_id,
+               client_name = EXCLUDED.client_name,
+               known_client = EXCLUDED.known_client,
+               mode = EXCLUDED.mode,
+               status = EXCLUDED.status,
+               reason = CASE
+                   WHEN EXCLUDED.reason <> '' THEN EXCLUDED.reason
+                   ELSE call_session.reason
+               END,
+               ended_at = COALESCE(EXCLUDED.ended_at, call_session.ended_at),
+               command_id = CASE
+                   WHEN EXCLUDED.command_id <> '' THEN EXCLUDED.command_id
+                   ELSE call_session.command_id
+               END,
+               committed = call_session.committed OR EXCLUDED.committed,
+               transcripts = EXCLUDED.transcripts,
+               stats = CASE
+                   WHEN EXCLUDED.stats <> '{}'::jsonb THEN EXCLUDED.stats
+                   ELSE call_session.stats
+               END""",
+        str(record.get("call_id", "")),
+        str(record.get("phone_number", "")),
+        str(record.get("client_id", "")),
+        str(record.get("client_name", "")),
+        bool(record.get("known_client", False)),
+        str(record.get("mode", "baileys_voip")),
+        str(record.get("status", "ringing")),
+        str(record.get("reason", "")),
+        started_dt,
+        ended_dt,
+        str(record.get("command_id", "")),
+        bool(record.get("committed", False)),
+        json.dumps(record.get("transcripts") or [], ensure_ascii=False, default=str),
+        json.dumps(record.get("stats") or {}, ensure_ascii=False, default=str),
+    )
+
+
+async def fetch_call_sessions(limit: int = 30) -> list[dict[str, Any]]:
+    rows = await pool().fetch(
+        """SELECT call_id, phone_number, client_id, client_name, known_client, mode,
+                  status, reason, started_at, ended_at, command_id, committed, transcripts, stats
+           FROM call_session
+           ORDER BY started_at DESC
+           LIMIT $1""",
+        limit,
+    )
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        item["transcripts"] = _decode_json_field(item.get("transcripts"), [])
+        item["stats"] = _decode_json_field(item.get("stats"), {})
+        if isinstance(item.get("started_at"), datetime):
+            item["started_at"] = item["started_at"].isoformat()
+        if isinstance(item.get("ended_at"), datetime):
+            item["ended_at"] = item["ended_at"].isoformat()
+        out.append(item)
+    return out
+
+
+async def fetch_call_session(call_id: str) -> dict[str, Any] | None:
+    row = await pool().fetchrow(
+        """SELECT call_id, phone_number, client_id, client_name, known_client, mode,
+                  status, reason, started_at, ended_at, command_id, committed, transcripts, stats
+           FROM call_session
+           WHERE call_id = $1""",
+        call_id,
+    )
+    if not row:
+        return None
+    item = dict(row)
+    item["transcripts"] = _decode_json_field(item.get("transcripts"), [])
+    item["stats"] = _decode_json_field(item.get("stats"), {})
+    if isinstance(item.get("started_at"), datetime):
+        item["started_at"] = item["started_at"].isoformat()
+    if isinstance(item.get("ended_at"), datetime):
+        item["ended_at"] = item["ended_at"].isoformat()
+    item["linked_commands"] = await fetch_commands_by_call(call_id)
+    return item
+
+
+async def fetch_pipeline_logs_for_command(
+    command_id: str, evenement_id: str = "", call_id: str = "", limit: int = 30
+) -> list[dict[str, Any]]:
+    base_cmd = (
+        command_id.split("-")[0] + "-" + command_id.split("-")[1]
+        if "-" in command_id
+        else command_id
+    )
+    rows = await pool().fetch(
+        """SELECT log_id, created_at, event_type, node_id, client_id, phone_number,
+                  command_id, actor, status, message, payload
+           FROM pipeline_log
+           WHERE command_id = $1
+              OR command_id = $2
+              OR ($3 <> '' AND payload::text LIKE '%' || $3 || '%')
+              OR ($4 <> '' AND payload::text LIKE '%' || $4 || '%')
+           ORDER BY created_at DESC, log_id DESC
+           LIMIT $5""",
+        command_id,
+        base_cmd,
+        evenement_id,
+        call_id,
+        limit,
+    )
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        item["payload"] = _decode_json_field(item.get("payload"), {})
+        out.append(item)
+    return out
 
 
 async def set_command_status(

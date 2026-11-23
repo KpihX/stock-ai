@@ -130,6 +130,8 @@ let currentQr: { dataUrl: string; at: number } | null = null
 let status = 'disconnected'
 let manualDisconnect = false
 let reconnectTimer: NodeJS.Timeout | null = null
+let socketGen = 0
+let connectInFlight: Promise<void> | null = null
 const seenMessageIds = new Set<string>()
 
 process.on('uncaughtException', (err) => {
@@ -230,73 +232,104 @@ function extract(rawMessage: any): { text: string; modality: string } {
 }
 
 async function postSignal(signal: Signal): Promise<void> {
-  try {
-    const response = await fetch(`${API_URL}/webhooks/whatsapp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(signal),
-    })
-    if (!response.ok) console.error(`[wa] webhook ${response.status}`)
-  } catch (error) {
-    console.error('[wa] webhook failed', error)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await fetch(`${API_URL}/webhooks/whatsapp`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(8000),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(signal),
+      })
+      if (response.ok) return
+      console.error(`[wa] webhook ${response.status} (attempt ${attempt})`)
+    } catch (error) {
+      console.error(`[wa] webhook failed (attempt ${attempt})`, error)
+    }
+    if (attempt === 1) await new Promise((r) => setTimeout(r, 800))
   }
 }
 
-async function connect(): Promise<void> {
-  mkdirSync(STATE_DIR, { recursive: true })
-  const { state, saveCreds } = await useMultiFileAuthState(STATE_DIR)
-  const { version } = await fetchLatestBaileysVersion()
-
-  const createWASocket = ((makeWASocket as any)?.default ?? makeWASocket) as typeof makeWASocket
-  const activeSock = createWASocket({
-    version,
-    auth: state,
-    browser: ['Stockline', 'Chrome', '1.0.0'],
-    voip: {
-      maxConcurrentCalls: callsCfg.maxConcurrentCalls,
-      pthreadPoolSize: callsCfg.pthreadPoolSize,
-    },
-  } as any)
-  sock = activeSock
-  activeSock.ev.on('creds.update', saveCreds)
-
-  activeSock.ev.on('connection.update', (update: any) => {
-    const { connection, lastDisconnect, qr } = update
-    if (qr) {
-      status = 'qr_pending'
-      QRCode.toDataURL(qr)
-        .then((dataUrl: string) => {
-          currentQr = { dataUrl, at: Date.now() }
-          console.log('[wa] QR ready for pairing')
-        })
-        .catch((error: unknown) => console.error('[wa] QR render failed', error))
-    }
-    if (connection === 'close') {
-      if (sock === activeSock) sock = null
-      status = 'disconnected'
-      currentQr = null
-      const code = (lastDisconnect?.error as Boom)?.output?.statusCode
-      console.warn(`[wa] connection closed code=${code ?? 'unknown'} manual=${manualDisconnect}`)
-      if (code === DisconnectReason.loggedOut) {
-        clearAuthFiles()
-        return
+async function connect(expectedGen = socketGen): Promise<void> {
+  if (connectInFlight) {
+    try {
+      await connectInFlight
+    } catch {}
+    if (expectedGen !== socketGen || manualDisconnect) return
+  }
+  connectInFlight = (async () => {
+    try {
+      mkdirSync(STATE_DIR, { recursive: true })
+      const { state, saveCreds } = await useMultiFileAuthState(STATE_DIR)
+      let version: [number, number, number] = [2, 3000, 1027934701]
+      try {
+        const fetched = await Promise.race([
+          fetchLatestBaileysVersion(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('fetchLatestBaileysVersion timeout')), 5000)
+          ),
+        ])
+        if (fetched?.version) version = fetched.version
+      } catch (err) {
+        console.warn('[wa] fetchLatestBaileysVersion fallback:', err)
       }
-      if (!manualDisconnect && !reconnectTimer) {
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null
-          if (!manualDisconnect) void connect()
-        }, 3000)
-      }
-    }
-    if (connection === 'open') {
-      status = 'connected'
-      currentQr = null
-      console.log(`[wa] connected as ${activeSock.user?.id || '?'}`)
-      void voipManager.attachSocket(activeSock)
-    }
-  })
 
-  activeSock.ev.on('messages.upsert', async ({ messages, type }: any) => {
+      if (expectedGen !== socketGen || manualDisconnect) return
+
+      const createWASocket = ((makeWASocket as any)?.default ?? makeWASocket) as typeof makeWASocket
+      const activeSock = createWASocket({
+        version,
+        auth: state,
+        browser: ['Stockline', 'Chrome', '1.0.0'],
+        voip: {
+          maxConcurrentCalls: callsCfg.maxConcurrentCalls,
+          pthreadPoolSize: callsCfg.pthreadPoolSize,
+        },
+      } as any)
+      sock = activeSock
+      const myGen = expectedGen
+      activeSock.ev.on('creds.update', saveCreds)
+
+      activeSock.ev.on('connection.update', (update: any) => {
+        if (myGen !== socketGen || sock !== activeSock) return
+        const { connection, lastDisconnect, qr } = update
+        if (qr) {
+          status = 'qr_pending'
+          QRCode.toDataURL(qr)
+            .then((dataUrl: string) => {
+              if (myGen !== socketGen) return
+              currentQr = { dataUrl, at: Date.now() }
+              console.log('[wa] QR ready for pairing')
+            })
+            .catch((error: unknown) => console.error('[wa] QR render failed', error))
+        }
+        if (connection === 'close') {
+          if (sock === activeSock) sock = null
+          status = 'disconnected'
+          currentQr = null
+          const code = (lastDisconnect?.error as Boom)?.output?.statusCode
+          console.warn(`[wa] connection closed code=${code ?? 'unknown'} manual=${manualDisconnect}`)
+          if (code === DisconnectReason.loggedOut) {
+            clearAuthFiles()
+            return
+          }
+          if (!manualDisconnect && !reconnectTimer) {
+            const genAtSchedule = socketGen
+            reconnectTimer = setTimeout(() => {
+              reconnectTimer = null
+              if (!manualDisconnect && genAtSchedule === socketGen) void connect(genAtSchedule)
+            }, 3000)
+          }
+        }
+        if (connection === 'open') {
+          status = 'connected'
+          currentQr = null
+          console.log(`[wa] connected as ${activeSock.user?.id || '?'}`)
+          void voipManager.attachSocket(activeSock)
+        }
+      })
+
+      activeSock.ev.on('messages.upsert', async ({ messages, type }: any) => {
+        if (myGen !== socketGen) return
     if (type !== 'notify') return
     for (const message of messages) {
       if (!message.message || message.key.fromMe) continue
@@ -350,12 +383,17 @@ async function connect(): Promise<void> {
         message_id: msgId,
         media_path: mediaPath,
       }
-      console.log(
-        `[wa] posting signal id=${signal.evenement_id} phone=${cNumber} modality=${modality} media=${mediaPath || 'none'}`
-      )
-      await postSignal(signal)
+        console.log(
+          `[wa] posting signal id=${signal.evenement_id} phone=${cNumber} modality=${modality} media=${mediaPath || 'none'}`
+        )
+        await postSignal(signal)
+      }
+    })
+    } finally {
+      connectInFlight = null
     }
-  })
+  })()
+  return connectInFlight
 }
 
 function sendJson(response: ServerResponse, code: number, body: unknown): void {
@@ -404,20 +442,24 @@ const server = createServer(async (request, response) => {
       reconnectTimer = null
     }
     if (reset || status !== 'connected' || !sock) {
-      if (reset) clearAuthFiles()
-      try {
-        sock?.end?.(undefined)
-      } catch {}
+      socketGen += 1
+      const prev = sock
       sock = null
       currentQr = null
       status = 'connecting'
-      void connect()
+      try {
+        prev?.end?.(undefined)
+      } catch {}
+      if (reset) clearAuthFiles()
+      const targetGen = socketGen
+      void connect(targetGen)
     }
     sendJson(response, 200, { status })
     return
   }
   if (request.method === 'POST' && request.url === '/disconnect') {
     manualDisconnect = true
+    socketGen += 1
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
@@ -427,7 +469,12 @@ const server = createServer(async (request, response) => {
     status = 'disconnected'
     currentQr = null
     try {
-      await prev?.logout?.()
+      if (prev?.logout) {
+        await Promise.race([
+          prev.logout(),
+          new Promise((resolve) => setTimeout(resolve, 3500)),
+        ])
+      }
     } catch {}
     try {
       prev?.end?.(undefined)
@@ -521,10 +568,15 @@ const server = createServer(async (request, response) => {
   }
   if (request.method === 'POST' && request.url === '/call/inject-audio') {
     try {
-      const body = JSON.parse(await readBody(request)) as { call_id: string; wav_base64: string }
+      const body = JSON.parse(await readBody(request)) as {
+        call_id: string
+        wav_base64: string
+        speaker?: 'client' | 'manager'
+      }
       const result = voipManager.injectCallerAudio(
         String(body.call_id || ''),
-        String(body.wav_base64 || '')
+        String(body.wav_base64 || ''),
+        body.speaker === 'manager' ? 'manager' : 'client'
       )
       sendJson(response, 200, result)
     } catch (error) {

@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 from stockline_ai.api import calls
+from stockline_ai.api.errors import sanitize_error
 from stockline_ai.config import CONFIG
 from stockline_ai.providers import get_spec
 
@@ -129,5 +130,103 @@ def test_call_ended_before_utterance_still_commits() -> None:
             await asyncio.sleep(0.02)
 
     asyncio.run(_run())
-    assert committed_texts == ["Trois pains de campagne pour mardi soir."]
+    assert committed_texts == ["[Client] Trois pains de campagne pour mardi soir."]
+    calls._calls.clear()
+
+
+def test_sanitize_error_redacts_secrets() -> None:
+    raw = (
+        "Failed calling https://integrate.api.nvidia.com with Bearer nvapi-AbCdEf1234567890 "
+        "and postgresql://stockline:supersecretpass@postgres:5432/stockline"
+    )
+    cleaned = sanitize_error(raw)
+    assert "nvapi-AbCdEf1234567890" not in cleaned
+    assert "supersecretpass" not in cleaned
+    assert "[REDACTED]" in cleaned
+
+
+def test_bidirectional_call_dialogue_includes_manager_and_client() -> None:
+    import base64
+
+    calls._calls.clear()
+    committed_texts: list[str] = []
+    published_events: list[dict] = []
+
+    async def fake_transcribe(wav_path, product_names):  # type: ignore[no-untyped-def]
+        if len(published_events) == 1:
+            return {"text": "Je voudrais 5 kilos de tomates grappe."}
+        return {"text": "Parfait, c'est noté pour demain matin."}
+
+    async def fake_handle_signal(sig):  # type: ignore[no-untyped-def]
+        committed_texts.append(sig.texte)
+        return {"status": "ok", "command_id": "C-test123"}
+
+    async def fake_publish(event):  # type: ignore[no-untyped-def]
+        published_events.append(dict(event))
+
+    async def _run() -> None:
+        with (
+            patch(
+                "stockline_ai.api.calls.db.fetch_client_by_phone",
+                new=AsyncMock(
+                    return_value={
+                        "client_id": "CLI-0045",
+                        "client_name": "Yohann Bikele",
+                        "phone_number": "33745746025",
+                    }
+                ),
+            ),
+            patch(
+                "stockline_ai.api.calls.db.fetch_products",
+                new=AsyncMock(return_value=[{"product_name": "Tomates grappe"}]),
+            ),
+            patch("stockline_ai.api.calls.db.upsert_call_session", new=AsyncMock()),
+            patch("stockline_ai.api.calls.publish", side_effect=fake_publish),
+            patch("stockline_ai.api.calls.stt.transcribe_wav", side_effect=fake_transcribe),
+            patch("stockline_ai.api.calls.handle_signal", side_effect=fake_handle_signal),
+        ):
+            await calls.call_webhook(
+                {"event": "call.incoming", "call_id": "BIDIR1", "from": "33745746025"}
+            )
+            wav_b64 = base64.b64encode(b"RIFF0000WAVEfmt ").decode("ascii")
+            await calls.call_webhook(
+                {
+                    "event": "call.utterance",
+                    "call_id": "BIDIR1",
+                    "from": "33745746025",
+                    "speaker": "client",
+                    "duration_ms": 1500,
+                    "wav_base64": wav_b64,
+                }
+            )
+            await calls.call_webhook(
+                {
+                    "event": "call.utterance",
+                    "call_id": "BIDIR1",
+                    "from": "33745746025",
+                    "speaker": "manager",
+                    "duration_ms": 1300,
+                    "wav_base64": wav_b64,
+                }
+            )
+            await calls.call_webhook(
+                {
+                    "event": "call.error",
+                    "call_id": "BIDIR1",
+                    "from": "33745746025",
+                    "error": "ICE glitch Bearer nvapi-secret123",
+                }
+            )
+            await calls.commit_call("BIDIR1", "admin")
+
+    asyncio.run(_run())
+    assert committed_texts == [
+        "[Client] Je voudrais 5 kilos de tomates grappe.\n"
+        "[Gestionnaire] Parfait, c'est noté pour demain matin."
+    ]
+    transcript_events = [e for e in published_events if e.get("type") == "call.transcript"]
+    assert [e.get("speaker") for e in transcript_events] == ["client", "manager"]
+    err_events = [e for e in published_events if e.get("type") == "call.error"]
+    assert len(err_events) == 1
+    assert "nvapi-secret123" not in err_events[0]["error"]
     calls._calls.clear()

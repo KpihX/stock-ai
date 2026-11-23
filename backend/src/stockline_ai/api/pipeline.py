@@ -9,6 +9,7 @@ from typing import Any
 
 from ..config import get_config
 from . import db, ocr, stt, whats
+from .errors import sanitize_error
 from .llm import normalize
 from .schemas import ClientStats, EnrichedData, OrderLine, Product, Signal
 
@@ -186,7 +187,7 @@ async def _send_auto_ack(
                 "phone_number": phone,
                 "command_id": command_id,
                 "status": "warn",
-                "message": f"Auto-ack failed for {command_id}: {exc}",
+                "message": f"Auto-ack failed for {command_id}: {sanitize_error(exc)}",
             }
         )
         return False
@@ -215,6 +216,24 @@ async def _extract_ocr(
 async def handle_signal(signal: Signal) -> dict[str, Any]:
     """The CommandHandler: enrich the Data with client id, client stats and product catalogue."""
     phone = _digits(signal.cNumber or signal.actor_ref)
+    try:
+        return await _handle_signal_inner(signal, phone)
+    except Exception as exc:
+        clean_err = sanitize_error(exc)
+        await publish(
+            {
+                "type": "pipeline.error",
+                "node": "cmd.handler",
+                "phone_number": phone,
+                "status": "error",
+                "message": f"Pipeline failed for {phone or 'unknown'}: {clean_err}",
+                "error": clean_err,
+            }
+        )
+        return {"status": "error", "reason": "pipeline_exception", "detail": clean_err}
+
+
+async def _handle_signal_inner(signal: Signal, phone: str) -> dict[str, Any]:
     event_key = (signal.evenement_id or signal.message_id or "").strip()
     if event_key:
         if event_key in _seen_events:
@@ -276,6 +295,8 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
     product_rows = await db.fetch_products()
     catalogue = [Product(**p) for p in product_rows]
     product_names = [str(p["product_name"]) for p in product_rows]
+    stt_res: dict[str, Any] = {}
+    ocr_res: dict[str, Any] = {}
 
     if signal.modality == "audio":
         if signal.media_path:
@@ -283,21 +304,37 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
             stt_provider = str(stt_res.get("provider") or get_config().provider("stt"))
             if stt_res.get("text"):
                 signal = signal.model_copy(update={"texte": str(stt_res["text"])})
+            stt_err = sanitize_error(str(stt_res.get("error", "empty transcript")))
             await publish(
                 {
-                    "type": "stt.transcribed",
+                    "type": "stt.transcribed" if stt_res.get("text") else "stt.error",
                     "node": "stt.whisper",
                     "client_id": client["client_id"],
                     "phone_number": phone,
-                    "status": "ok" if stt_res.get("text") else "rejected",
+                    "status": "ok" if stt_res.get("text") else "error",
                     "message": (
                         f"[{stt_provider}] {signal.texte[:140]}"
                         if stt_res.get("text")
-                        else f"[{stt_provider}] failed: {stt_res.get('error', 'empty transcript')}"
+                        else f"[{stt_provider}] failed: {stt_err}"
                     ),
                     "stt": stt_res,
                 }
             )
+            if stt_res.get("fallback_from"):
+                await publish(
+                    {
+                        "type": "pipeline.warning",
+                        "node": "stt.whisper",
+                        "client_id": client["client_id"],
+                        "phone_number": phone,
+                        "status": "warn",
+                        "message": (
+                            f"STT {stt_res['fallback_from']} failed "
+                            f"({sanitize_error(str(stt_res.get('primary_error', 'error')))}), "
+                            f"switched to {stt_provider}"
+                        ),
+                    }
+                )
         else:
             await publish(
                 {
@@ -318,21 +355,37 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
             ocr_provider = str(ocr_res.get("provider") or get_config().provider("ocr"))
             if ocr_res.get("text"):
                 signal = signal.model_copy(update={"texte": str(ocr_res["text"])})
+            ocr_err = sanitize_error(str(ocr_res.get("error", "empty text")))
             await publish(
                 {
-                    "type": "ocr.extracted",
+                    "type": "ocr.extracted" if ocr_res.get("text") else "ocr.error",
                     "node": "ocr.tesseract",
                     "client_id": client["client_id"],
                     "phone_number": phone,
-                    "status": "ok" if ocr_res.get("text") else "rejected",
+                    "status": "ok" if ocr_res.get("text") else "error",
                     "message": (
                         f"[{ocr_provider}] {signal.texte[:140]}"
                         if ocr_res.get("text")
-                        else f"[{ocr_provider}] failed: {ocr_res.get('error', 'empty text')}"
+                        else f"[{ocr_provider}] failed: {ocr_err}"
                     ),
                     "ocr": ocr_res,
                 }
             )
+            if ocr_res.get("fallback_from"):
+                await publish(
+                    {
+                        "type": "pipeline.warning",
+                        "node": "ocr.tesseract",
+                        "client_id": client["client_id"],
+                        "phone_number": phone,
+                        "status": "warn",
+                        "message": (
+                            f"OCR {ocr_res['fallback_from']} failed "
+                            f"({sanitize_error(str(ocr_res.get('primary_error', 'error')))}), "
+                            f"switched to {ocr_provider}"
+                        ),
+                    }
+                )
         if not signal.texte or signal.texte == "[image]":
             return {"status": "rejected", "reason": "empty_ocr", "phone_number": phone}
 
@@ -415,21 +468,22 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
             event_logger=publish,
         )
     except Exception as exc:
+        clean_err = sanitize_error(exc)
         await publish(
             {
                 "type": "llm.error",
                 "node": "llm.nemotron",
                 "client_id": client["client_id"],
                 "phone_number": phone,
-                "status": "rejected",
-                "message": f"LLM extraction failed: {exc}",
-                "error": str(exc),
+                "status": "error",
+                "message": f"LLM extraction failed: {clean_err}",
+                "error": clean_err,
             }
         )
         return {
             "status": "error",
             "reason": "llm_error",
-            "detail": str(exc),
+            "detail": clean_err,
             "client_id": client["client_id"],
         }
     action = str(normalized.get("action") or "create").lower().strip()
@@ -483,6 +537,47 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
     lines = normalized.get("order_lines", [])
     now = datetime.now(UTC)
     products = {p["product_id"]: p for p in product_rows}
+    if signal.canal == "call":
+        if signal.evenement_id.startswith("wacall_"):
+            raw_cid = signal.evenement_id.removeprefix("wacall_")
+            source_channel = "simulated_call" if raw_cid.startswith("SIM-") else "whatsapp_call"
+            source_call_id = raw_cid
+        elif signal.evenement_id.startswith("call_"):
+            source_channel = "browser_call"
+            source_call_id = signal.evenement_id.removeprefix("call_")
+        else:
+            source_channel = "whatsapp_call"
+            source_call_id = signal.evenement_id
+    elif signal.modality == "audio":
+        source_channel = "whatsapp_voice"
+        source_call_id = ""
+    elif signal.modality == "image":
+        source_channel = "whatsapp_image"
+        source_call_id = ""
+    else:
+        source_channel = "whatsapp_text"
+        source_call_id = ""
+
+    source_metadata: dict[str, Any] = {
+        "canal": signal.canal,
+        "modality": signal.modality,
+        "action": action,
+        "media_path": signal.media_path,
+        "llm_model": get_config().model_for("agent_llm"),
+    }
+    if stt_res:
+        source_metadata["stt"] = {
+            k: stt_res[k]
+            for k in ("provider", "model", "elapsed_ms", "fallback_from", "primary_error")
+            if k in stt_res
+        }
+    if ocr_res:
+        source_metadata["ocr"] = {
+            k: ocr_res[k]
+            for k in ("provider", "model", "elapsed_ms", "fallback_from", "primary_error")
+            if k in ocr_res
+        }
+
     valid_rows: list[dict[str, Any]] = []
     for line in lines:
         product_id = str(line.get("product_id", ""))
@@ -499,6 +594,11 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
                 "quantity": float(line.get("quantity", 0)),
                 "status": "new",
                 "summary": summary,
+                "source_channel": source_channel,
+                "source_call_id": source_call_id,
+                "source_evenement_id": signal.evenement_id,
+                "source_raw_text": signal.texte,
+                "source_metadata": source_metadata,
             }
         )
 
@@ -531,8 +631,28 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
             "normalized_input": normalized,
         }
 
-    command_id = f"C-{uuid.uuid4().hex[:8]}"
     inserted = len(valid_rows)
+    if inserted == 0:
+        cname = client["client_name"]
+        await publish(
+            {
+                "type": "pipeline.warning",
+                "node": "db.command",
+                "client_id": client["client_id"],
+                "phone_number": phone,
+                "status": "warn",
+                "message": f"No catalogue items matched for {cname}: {summary[:120]}",
+            }
+        )
+        return {
+            "status": "rejected",
+            "reason": "no_matching_products",
+            "command_id": "",
+            "lines": 0,
+            "is_new_client": is_new_client,
+            "normalized_input": normalized,
+        }
+    command_id = f"C-{uuid.uuid4().hex[:8]}"
     for index, row_data in enumerate(valid_rows):
         row_id = f"{command_id}-{index + 1}" if inserted > 1 else command_id
         await db.insert_command({**row_data, "command_id": row_id})
@@ -550,8 +670,7 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
             "message": f"Created {command_id} ({inserted} {line_word}) for {client['client_name']}",
         }
     )
-    if inserted > 0:
-        await _send_auto_ack(phone, client["client_id"], command_id, "create", summary)
+    await _send_auto_ack(phone, client["client_id"], command_id, "create", summary)
     return {
         "status": "ok",
         "action": "create",
