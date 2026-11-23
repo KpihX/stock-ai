@@ -142,7 +142,7 @@ class Config:
     @property
     def stt_models_dir(self) -> Path:
         settings = self.settings.get("stt") or {}
-        return Path(str(settings.get("models_dir", "~/.local/share/whisper-cpp"))).expanduser()
+        return Path(str(settings.get("models_dir", "/app/models/whisper"))).expanduser()
 
     @property
     def hitl_timeout_seconds(self) -> int:

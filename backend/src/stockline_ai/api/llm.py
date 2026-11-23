@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_tool_union_param import ChatCompletionToolUnionParam
 
@@ -43,6 +43,16 @@ TOOLS: list[ChatCompletionToolUnionParam] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_products",
+            "description": (
+                "Return the product catalogue with product_id, product_name, price and stock."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -53,33 +63,95 @@ def _system_prompt() -> str:
     return prompt
 
 
-def _client() -> OpenAI:
-    return OpenAI(
+def _client() -> AsyncOpenAI:
+    return AsyncOpenAI(
         base_url=CONFIG.base_url_for("agent_llm"),
         api_key=CONFIG.api_key("agent_llm", required=True),
     )
 
 
-async def normalize(enriched: dict[str, Any], tool_runner: Any) -> dict[str, Any]:
+def _parse_json(raw: str) -> dict[str, Any]:
+    text = raw.strip()
+    if "</think>" in text:
+        text = text.split("</think>", 1)[1].strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
+
+
+async def normalize(
+    enriched: dict[str, Any], tool_runner: Any, event_logger: Any = None
+) -> dict[str, Any]:
     """Run the tool-calling loop and return the parsed NormalizedInput payload."""
     client = _client()
+    model_name = CONFIG.model_for("agent_llm")
     messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": _system_prompt()},
         {"role": "user", "content": json.dumps(enriched, ensure_ascii=False, default=str)},
     ]
-    for _ in range(4):
-        response = client.chat.completions.create(
-            model=CONFIG.model_for("agent_llm"),
+    if event_logger is not None:
+        await event_logger(
+            {
+                "type": "llm.request",
+                "node": "llm.nemotron",
+                "client_id": str(enriched.get("client_id", "")),
+                "phone_number": str(enriched.get("cNumber", "")),
+                "status": "ok",
+                "message": (
+                    f"Calling {model_name} with text="
+                    f"{str((enriched.get('signal') or {}).get('texte', ''))[:100]!r} "
+                    f"and {len(enriched.get('products') or [])} catalogue products"
+                ),
+                "model": model_name,
+                "products_count": len(enriched.get("products") or []),
+                "input_text": str((enriched.get("signal") or {}).get("texte", "")),
+            }
+        )
+    for turn in range(1, 5):
+        response = await client.chat.completions.create(
+            model=model_name,
             messages=messages,
             tools=TOOLS,
             tool_choice="auto",
             temperature=0,
-            max_tokens=1500,
+            max_tokens=4000,
         )
         message = response.choices[0].message
         if not message.tool_calls:
-            content = message.content or "{}"
-            return json.loads(content)
+            raw_content = message.content or "{}"
+            parsed = _parse_json(raw_content)
+            if event_logger is not None:
+                await event_logger(
+                    {
+                        "type": "llm.response",
+                        "node": "llm.nemotron",
+                        "client_id": str(enriched.get("client_id", "")),
+                        "phone_number": str(enriched.get("cNumber", "")),
+                        "status": "ok",
+                        "message": (
+                            f"{model_name} turn {turn} -> "
+                            f"{len(parsed.get('order_lines') or [])} order line(s)"
+                        ),
+                        "turn": turn,
+                        "raw_output": raw_content[:1500],
+                        "parsed": parsed,
+                    }
+                )
+            return parsed
         messages.append(
             cast(
                 ChatCompletionMessageParam,

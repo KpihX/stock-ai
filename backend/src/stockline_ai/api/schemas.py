@@ -20,13 +20,20 @@ class OrderLine(BaseModel):
 class Command(BaseModel):
     command_id: str
     client_id: str
+    client_name: str = ""
+    client_phone: str = ""
+    client_order_count: int = 1
     recorded_at: datetime
     delivery_date: datetime
     price: float
     quantity: float
     product_id: str
+    product_name: str = ""
     status: str = "new"
     summary: str = ""
+    decision_comment: str = ""
+    decided_by: str = ""
+    decided_at: datetime | None = None
 
 
 class CommandDetail(BaseModel):
@@ -40,6 +47,7 @@ class ClientStats(BaseModel):
     client_name: str
     phone_number: str
     order_count: int = 0
+    last_order_lines: list[OrderLine] = Field(default_factory=list)
     usual_lines: list[OrderLine] = Field(default_factory=list)
 
 
@@ -75,7 +83,10 @@ class EnrichedData(BaseModel):
     client_id: str
     cNumber: str
     client_stats: ClientStats
+    products: list[Product] = Field(default_factory=list)
+    open_commands: list[dict] = Field(default_factory=list)
     signal: Signal
+    is_new_client: bool = False
 
 
 class NormalizedInput(BaseModel):
@@ -90,7 +101,9 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     token: str
+    role: str = "manager"
 
 
 class ApproveRequest(BaseModel):
     approve: bool
+    comment: str = ""

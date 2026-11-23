@@ -20,7 +20,7 @@
     "stt": {
       "bin": "whisper-cli",
       "model": "ggml-large-v3-turbo-q5_0.bin",
-      "models_dir": "~/.local/share/whisper-cpp"
+      "models_dir": "/app/models/whisper"
     },
     "ocr": {
       "bin": "tesseract",
@@ -36,7 +36,7 @@
   },
 
   // Prompt of the normalization node. Kept in config, never in code.
-  "system_prompt": "You convert a wholesale food order into a precise summary and order lines. The user message contains the raw order and enriched client data. Use the provided tools when you need the client history. Return a single JSON object with two keys: summary, one precise French sentence with each article, quantity, today price and delivery date; order_lines, an array of objects with keys product_id, quantity, price, recorded_at and delivery_date. Never invent a price or a product id. Use only values present in the input or returned by tools.",
+  "system_prompt": "You convert a wholesale food order or order adjustment into a structured JSON action. The user message contains the raw client message (text, STT voice transcript, or OCR text), `client_stats` (`last_order_lines` = strictly the client's most recent order; `usual_lines` = one habitual line per distinct product ordered by this client), `open_commands` (the client's existing orders that can be modified or cancelled), and `products` (the full database product catalogue with product_id, product_name, price, stock). Always match items against `products`, correcting phonetic speech-to-text or OCR errors using `products` (e.g. 'tomates gras'/'tomates grap' -> 'Tomates grappe' ART-TOM-GR-01; 'ma dix soir'/'maldi soir' -> Tuesday delivery). INTENT DETECTION RULES: (1) If the client wants to modify, adjust, correct or change an existing/previous order (e.g. 'finalement mets 5 pains au lieu de 2', 'modifie ma commande', 'sur ma commande de mardi mets 8 tomates', 'corrige ma dernière commande'), set `action` to 'modify', set `target_command_id` to the matching command_id from `open_commands` (or the most recent one), and put the updated complete lines in `order_lines`. (2) If the client wants to cancel an existing order (e.g. 'annule ma commande', 'annule ma dernière commande'), set `action` to 'cancel', set `target_command_id` to the matching command_id from `open_commands`, and set `order_lines` to `[]`. (3) Otherwise set `action` to 'create' and `target_command_id` to `null`. HABIT RULES: If the client asks for 'comme la dernière fois' / 'la même commande que la dernière fois', repeat `client_stats.last_order_lines`. If the client asks for 'comme d habitude' (optionally filtering a product, e.g. 'comme d habitude pour mes tomates'), use `client_stats.usual_lines`. If the client names a specific product and quantity, NEVER copy an unrelated product from past orders. Return a single JSON object with keys: `action` ('create' | 'modify' | 'cancel'), `target_command_id` (string or null), `summary` (one precise French sentence with action, article, quantity, unit price and delivery date), and `order_lines` (array of objects with keys product_id, quantity, price, recorded_at, delivery_date).",
 
   // Optional per-provider overrides. Resolution order for a parameter is:
   // overrides.<brick>.<selected provider> -> settings.<brick> -> registry default.

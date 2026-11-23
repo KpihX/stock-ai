@@ -32,6 +32,7 @@ services:
       WHATS_PROXY_STATE_DIR: /app/wa-state
     volumes:
       - wa_session:/app/wa-state
+      - whisper_models:/app/models/whisper
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,6 +49,7 @@ services:
 volumes:
   pg_data:
   wa_session:
+  whisper_models:
 
 networks:
   proxy:

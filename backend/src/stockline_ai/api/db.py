@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
@@ -14,6 +15,12 @@ CREATE TABLE IF NOT EXISTS client (
     client_id TEXT PRIMARY KEY,
     phone_number TEXT UNIQUE NOT NULL,
     client_name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS manager (
+    username TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS product (
     product_id TEXT PRIMARY KEY,
@@ -30,9 +37,29 @@ CREATE TABLE IF NOT EXISTS command (
     price NUMERIC(12, 2) NOT NULL,
     quantity NUMERIC(12, 3) NOT NULL,
     status TEXT NOT NULL DEFAULT 'new',
-    summary TEXT NOT NULL DEFAULT ''
+    summary TEXT NOT NULL DEFAULT '',
+    decision_comment TEXT NOT NULL DEFAULT '',
+    decided_by TEXT NOT NULL DEFAULT '',
+    decided_at TIMESTAMPTZ
 );
+ALTER TABLE command ADD COLUMN IF NOT EXISTS decision_comment TEXT NOT NULL DEFAULT '';
+ALTER TABLE command ADD COLUMN IF NOT EXISTS decided_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE command ADD COLUMN IF NOT EXISTS decided_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS command_client_idx ON command(client_id);
+CREATE TABLE IF NOT EXISTS pipeline_log (
+    log_id BIGSERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    event_type TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    client_id TEXT NOT NULL DEFAULT '',
+    phone_number TEXT NOT NULL DEFAULT '',
+    command_id TEXT NOT NULL DEFAULT '',
+    actor TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS pipeline_log_created_idx ON pipeline_log(created_at DESC);
 """
 
 _pool: asyncpg.Pool | None = None
@@ -78,25 +105,95 @@ async def fetch_client_by_phone(phone: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def create_client(client_id: str, phone: str, name: str) -> dict[str, Any]:
+    row = await pool().fetchrow(
+        """INSERT INTO client(client_id, phone_number, client_name)
+           VALUES($1,$2,$3)
+           ON CONFLICT (phone_number) DO UPDATE SET client_name = EXCLUDED.client_name
+           RETURNING client_id, phone_number, client_name""",
+        client_id,
+        phone,
+        name,
+    )
+    return dict(row)
+
+
+async def fetch_manager(username: str) -> dict[str, Any] | None:
+    row = await pool().fetchrow(
+        "SELECT username, password_hash, is_active FROM manager WHERE username = $1",
+        username,
+    )
+    return dict(row) if row else None
+
+
+async def list_managers() -> list[dict[str, Any]]:
+    rows = await pool().fetch(
+        "SELECT username, is_active, created_at FROM manager ORDER BY username"
+    )
+    return [dict(r) for r in rows]
+
+
+async def upsert_manager(username: str, password_hash: str, is_active: bool = True) -> None:
+    await pool().execute(
+        """INSERT INTO manager(username, password_hash, is_active)
+           VALUES($1,$2,$3)
+           ON CONFLICT (username) DO UPDATE
+           SET password_hash = EXCLUDED.password_hash, is_active = EXCLUDED.is_active""",
+        username,
+        password_hash,
+        is_active,
+    )
+
+
+async def delete_manager(username: str) -> bool:
+    result = await pool().execute("DELETE FROM manager WHERE username = $1", username)
+    return result.endswith("1")
+
+
+async def delete_client(client_id: str) -> bool:
+    await pool().execute("DELETE FROM command WHERE client_id = $1", client_id)
+    result = await pool().execute("DELETE FROM client WHERE client_id = $1", client_id)
+    return result.endswith("1")
+
+
+async def delete_product(product_id: str) -> bool:
+    await pool().execute("DELETE FROM command WHERE product_id = $1", product_id)
+    result = await pool().execute("DELETE FROM product WHERE product_id = $1", product_id)
+    return result.endswith("1")
+
+
 async def fetch_client_stats(client_id: str) -> dict[str, Any]:
     row = await pool().fetchrow(
         """SELECT count(*) AS order_count,
-                  COALESCE(array_agg(product_id ORDER BY recorded_at DESC)[1], '') AS usual_product
+                  COALESCE(sum(price * quantity), 0) AS total_spent,
+                  COALESCE(sum(quantity), 0) AS total_quantity,
+                  max(recorded_at) AS last_order_at,
+                  COALESCE(
+                      (array_agg(product_id ORDER BY recorded_at DESC))[1],
+                      ''
+                  ) AS usual_product
            FROM command WHERE client_id = $1""",
         client_id,
     )
     return {
         "client_id": client_id,
         "order_count": int(row["order_count"]),
+        "total_spent": float(row["total_spent"] or 0),
+        "total_quantity": float(row["total_quantity"] or 0),
+        "last_order_at": row["last_order_at"],
         "usual_product": row["usual_product"] or "",
     }
 
 
 async def fetch_recent_commands(client_id: str, limit: int = 5) -> list[dict[str, Any]]:
     rows = await pool().fetch(
-        """SELECT command_id, client_id, product_id, recorded_at, delivery_date,
-                  price, quantity, status, summary
-           FROM command WHERE client_id = $1 ORDER BY recorded_at DESC LIMIT $2""",
+        """SELECT c.command_id, c.client_id, c.product_id,
+                  COALESCE(p.product_name, c.product_id) AS product_name,
+                  c.recorded_at, c.delivery_date, c.price, c.quantity, c.status, c.summary,
+                  c.decision_comment, c.decided_by, c.decided_at
+           FROM command c
+           LEFT JOIN product p ON p.product_id = c.product_id
+           WHERE c.client_id = $1 ORDER BY c.recorded_at DESC LIMIT $2""",
         client_id,
         limit,
     )
@@ -105,9 +202,16 @@ async def fetch_recent_commands(client_id: str, limit: int = 5) -> list[dict[str
 
 async def fetch_commands(limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
     rows = await pool().fetch(
-        """SELECT command_id, client_id, product_id, recorded_at, delivery_date,
-                  price, quantity, status, summary
-           FROM command ORDER BY recorded_at DESC LIMIT $1 OFFSET $2""",
+        """SELECT c.command_id, c.client_id, c.product_id,
+                  COALESCE(p.product_name, c.product_id) AS product_name,
+                  c.recorded_at, c.delivery_date, c.price, c.quantity, c.status, c.summary,
+                  c.decision_comment, c.decided_by, c.decided_at,
+                  cl.client_name, cl.phone_number AS client_phone,
+                  COUNT(*) OVER (PARTITION BY c.client_id) AS client_order_count
+           FROM command c
+           JOIN client cl ON cl.client_id = c.client_id
+           LEFT JOIN product p ON p.product_id = c.product_id
+           ORDER BY c.recorded_at DESC LIMIT $1 OFFSET $2""",
         limit,
         offset,
     )
@@ -116,9 +220,18 @@ async def fetch_commands(limit: int = 50, offset: int = 0) -> list[dict[str, Any
 
 async def fetch_command(command_id: str) -> dict[str, Any] | None:
     row = await pool().fetchrow(
-        """SELECT command_id, client_id, product_id, recorded_at, delivery_date,
-                  price, quantity, status, summary
-           FROM command WHERE command_id = $1""",
+        """SELECT c.command_id, c.client_id, c.product_id,
+                  COALESCE(p.product_name, c.product_id) AS product_name,
+                  c.recorded_at, c.delivery_date, c.price, c.quantity, c.status, c.summary,
+                  c.decision_comment, c.decided_by, c.decided_at,
+                  cl.client_name, cl.phone_number AS client_phone,
+                  (
+                      SELECT COUNT(*) FROM command c2 WHERE c2.client_id = c.client_id
+                  ) AS client_order_count
+           FROM command c
+           JOIN client cl ON cl.client_id = c.client_id
+           LEFT JOIN product p ON p.product_id = c.product_id
+           WHERE c.command_id = $1""",
         command_id,
     )
     return dict(row) if row else None
@@ -143,11 +256,72 @@ async def insert_command(data: dict[str, Any]) -> None:
     )
 
 
-async def set_command_status(command_id: str, status: str) -> bool:
+async def set_command_status(
+    command_id: str, status: str, comment: str = "", actor: str = ""
+) -> bool:
     result = await pool().execute(
-        "UPDATE command SET status = $2 WHERE command_id = $1", command_id, status
+        """UPDATE command
+           SET status = $2,
+               decision_comment = $3,
+               decided_by = $4,
+               decided_at = now()
+           WHERE command_id = $1""",
+        command_id,
+        status,
+        comment,
+        actor,
     )
     return result.endswith("1")
+
+
+async def insert_pipeline_log(data: dict[str, Any]) -> dict[str, Any]:
+    row = await pool().fetchrow(
+        """INSERT INTO pipeline_log
+           (event_type, node_id, client_id, phone_number,
+            command_id, actor, status, message, payload)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+           RETURNING log_id, created_at, event_type, node_id, client_id, phone_number,
+                     command_id, actor, status, message, payload""",
+        data.get("event_type", ""),
+        data.get("node_id", ""),
+        data.get("client_id", ""),
+        data.get("phone_number", ""),
+        data.get("command_id", ""),
+        data.get("actor", ""),
+        data.get("status", ""),
+        data.get("message", ""),
+        json.dumps(data.get("payload") or {}, ensure_ascii=False, default=str),
+    )
+    result = dict(row)
+    raw_payload = result.get("payload")
+    if isinstance(raw_payload, str):
+        try:
+            result["payload"] = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            result["payload"] = {}
+    return result
+
+
+async def fetch_pipeline_logs(limit: int = 100) -> list[dict[str, Any]]:
+    rows = await pool().fetch(
+        """SELECT log_id, created_at, event_type, node_id, client_id, phone_number,
+                  command_id, actor, status, message, payload
+           FROM pipeline_log
+           ORDER BY created_at DESC, log_id DESC
+           LIMIT $1""",
+        limit,
+    )
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        raw_payload = item.get("payload")
+        if isinstance(raw_payload, str):
+            try:
+                item["payload"] = json.loads(raw_payload)
+            except json.JSONDecodeError:
+                item["payload"] = {}
+        items.append(item)
+    return items
 
 
 async def fetch_products() -> list[dict[str, Any]]:
@@ -159,3 +333,81 @@ async def fetch_products() -> list[dict[str, Any]]:
 
 async def fetch_stock(product_id: str) -> float | None:
     return await pool().fetchval("SELECT stock FROM product WHERE product_id = $1", product_id)
+
+
+async def adjust_stock(product_id: str, delta: float) -> float:
+    new_val = await pool().fetchval(
+        """UPDATE product
+           SET stock = GREATEST(0, stock + $2)
+           WHERE product_id = $1
+           RETURNING stock""",
+        product_id,
+        delta,
+    )
+    return float(new_val or 0.0)
+
+
+async def fetch_command_group(base_command_id: str, client_id: str) -> list[dict[str, Any]]:
+    root = (
+        base_command_id.split("-")[0] + "-" + base_command_id.split("-")[1]
+        if "-" in base_command_id
+        else base_command_id
+    )
+    rows = await pool().fetch(
+        """SELECT command_id, client_id, product_id, recorded_at, delivery_date,
+                  price, quantity, status, summary
+           FROM command
+           WHERE client_id = $1
+             AND (command_id = $2 OR command_id LIKE $3)
+           ORDER BY command_id ASC""",
+        client_id,
+        root,
+        f"{root}-%",
+    )
+    return [dict(r) for r in rows]
+
+
+async def replace_command_group(
+    base_command_id: str, client_id: str, new_rows: list[dict[str, Any]]
+) -> list[str]:
+    existing = await fetch_command_group(base_command_id, client_id)
+    for row in existing:
+        if str(row.get("status")) == "processed":
+            await adjust_stock(str(row["product_id"]), float(row["quantity"]))
+    root = (
+        base_command_id.split("-")[0] + "-" + base_command_id.split("-")[1]
+        if "-" in base_command_id
+        else base_command_id
+    )
+    await pool().execute(
+        "DELETE FROM command WHERE client_id = $1 AND (command_id = $2 OR command_id LIKE $3)",
+        client_id,
+        root,
+        f"{root}-%",
+    )
+    written: list[str] = []
+    for index, line in enumerate(new_rows):
+        row_id = f"{root}-{index + 1}" if len(new_rows) > 1 else root
+        payload = {**line, "command_id": row_id}
+        await insert_command(payload)
+        written.append(row_id)
+    return written
+
+
+async def cancel_command_group(base_command_id: str, client_id: str, summary: str) -> list[str]:
+    existing = await fetch_command_group(base_command_id, client_id)
+    cancelled: list[str] = []
+    for row in existing:
+        if str(row.get("status")) == "processed":
+            await adjust_stock(str(row["product_id"]), float(row["quantity"]))
+        await pool().execute(
+            """UPDATE command
+               SET status = 'cancelled',
+                   summary = CASE WHEN $2 <> '' THEN $2 ELSE summary END,
+                   decided_at = now()
+               WHERE command_id = $1""",
+            row["command_id"],
+            summary,
+        )
+        cancelled.append(str(row["command_id"]))
+    return cancelled

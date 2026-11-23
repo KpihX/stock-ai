@@ -9,17 +9,17 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from ..config import CONFIG, validate_startup
-from . import admin, db
-from .auth import check_credentials, create_token, verify_token
+from . import admin, db, whats
+from .auth import check_credentials, create_token, get_claims, verify_token
 from .events import BUS
-from .pipeline import handle_signal, set_event_bus
+from .pipeline import handle_signal, publish, set_event_bus
 from .schemas import (
     ApproveRequest,
     Command,
@@ -65,14 +65,15 @@ async def health() -> dict[str, str]:
 
 @app.post("/api/auth/login", response_model=TokenResponse)
 async def login(payload: LoginRequest) -> TokenResponse:
-    if not check_credentials(payload.username, payload.password):
+    role = await check_credentials(payload.username, payload.password)
+    if not role:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    return TokenResponse(token=create_token(payload.username))
+    return TokenResponse(token=create_token(payload.username, role), role=role)
 
 
 @app.get("/api/auth/me")
-async def me(username: str = Depends(verify_token)) -> dict[str, str]:
-    return {"username": username}
+async def me(claims: Annotated[dict[str, str], Depends(get_claims)]) -> dict[str, str]:
+    return {"username": claims["username"], "role": claims["role"]}
 
 
 @app.post("/webhooks/whatsapp")
@@ -88,6 +89,9 @@ async def whatsapp_webhook(payload: dict[str, Any]) -> dict[str, str]:
         actor_ref=str(payload.get("cNumber", payload.get("actor_ref", ""))),
         modality=payload.get("modality", "text"),
         texte=payload.get("texte", ""),
+        cNumber=str(payload.get("cNumber", "")),
+        message_id=str(payload.get("message_id", "")),
+        media_path=str(payload.get("media_path", "")),
     )
     asyncio.create_task(handle_signal(signal))
     return {"status": "accepted"}
@@ -129,14 +133,85 @@ async def command_detail(command_id: str, _: str = Depends(verify_token)) -> Com
 
 @app.post("/api/commands/{command_id}/approve")
 async def approve_command(
-    command_id: str, payload: ApproveRequest, _: str = Depends(verify_token)
+    command_id: str, payload: ApproveRequest, actor: str = Depends(verify_token)
 ) -> dict[str, Any]:
+    row = await db.fetch_command(command_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Command not found")
     status_value = "processed" if payload.approve else "rejected"
-    updated = await db.set_command_status(command_id, status_value)
+    comment = payload.comment.strip()
+    prev_status = str(row.get("status") or "")
+    if prev_status == status_value:
+        return {
+            "command_id": command_id,
+            "status": status_value,
+            "comment": str(row.get("decision_comment") or comment),
+            "decided_by": str(row.get("decided_by") or actor),
+            "wa_sent": False,
+            "wa_error": "",
+        }
+    updated = await db.set_command_status(command_id, status_value, comment=comment, actor=actor)
     if not updated:
         raise HTTPException(status_code=404, detail="Command not found")
-    await BUS.publish({"type": "command.decided", "command_id": command_id, "status": status_value})
-    return {"command_id": command_id, "status": status_value}
+
+    product_id = str(row.get("product_id") or "")
+    qty = float(row.get("quantity") or 0)
+    new_stock: float | None = None
+    if product_id and qty > 0:
+        if payload.approve and prev_status != "processed":
+            new_stock = await db.adjust_stock(product_id, -qty)
+        elif not payload.approve and prev_status == "processed":
+            new_stock = await db.adjust_stock(product_id, qty)
+
+    phone = str(row.get("client_phone") or "")
+    client_name = str(row.get("client_name") or row.get("client_id") or "")
+    product_label = str(row.get("product_name") or row.get("product_id") or "")
+    action_label = "approuvée" if payload.approve else "rejetée"
+    wa_text = (
+        f"Stockline · Votre commande {command_id} ({qty:g} × {product_label}) a été {action_label}."
+    )
+    if comment:
+        wa_text = f"{wa_text}\nCommentaire : {comment}"
+
+    wa_sent = False
+    wa_error = ""
+    if phone:
+        try:
+            await whats.send_ack(phone, wa_text)
+            wa_sent = True
+        except Exception as exc:
+            wa_error = str(exc)
+
+    await publish(
+        {
+            "type": "command.decided",
+            "node": "decision.hitl",
+            "command_id": command_id,
+            "client_id": str(row.get("client_id") or ""),
+            "phone_number": phone,
+            "actor": actor,
+            "status": status_value,
+            "comment": comment,
+            "wa_sent": wa_sent,
+            "wa_error": wa_error,
+            "new_stock": new_stock,
+            "message": (
+                f"{command_id} ({client_name}) {status_value} by {actor}"
+                + (f' — "{comment}"' if comment else "")
+                + (f" · stock={new_stock:g}" if new_stock is not None else "")
+                + (f" · WhatsApp sent to {phone}" if wa_sent else "")
+            ),
+        }
+    )
+    return {
+        "command_id": command_id,
+        "status": status_value,
+        "comment": comment,
+        "decided_by": actor,
+        "wa_sent": wa_sent,
+        "wa_error": wa_error,
+        "new_stock": new_stock,
+    }
 
 
 @app.get("/api/commands/stream")

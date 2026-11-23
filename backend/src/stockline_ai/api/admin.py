@@ -13,17 +13,21 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+import json5
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from ..config import CONFIG
 from . import db
-from .auth import verify_token
+from .auth import hash_password, require_admin, verify_token
+from .events import BUS
 from .whats import _base_url
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+ADMIN_ASSETS = Path(__file__).parent / "admin_assets"
+PAGE = (ADMIN_ASSETS / "index.html").read_text(encoding="utf-8")
 
-PAGE = """<!doctype html>
+_LEGACY_PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stockline Admin</title>
@@ -44,6 +48,12 @@ pre{white-space:pre-wrap;font-size:12px;color:#8b949e}
 </style></head><body>
 <header><h1>STOCKLINE · ADMIN</h1><span>Setup & back-office</span></header>
 <main>
+<section id="login"><h2>Admin login</h2>
+<form onsubmit="doLogin(event)">
+<input id="admin-user" placeholder="admin" value="admin" required>
+<input id="admin-pass" type="password" placeholder="password" required>
+<button type="submit">Sign in</button></form>
+<p id="login-error"></p></section>
 <section><h2>WhatsApp</h2>
 <p>Status: <span id="wa-status" class="badge off">loading</span> · <span id="wa-phone"></span></p>
 <div id="qr"></div>
@@ -63,7 +73,11 @@ pre{white-space:pre-wrap;font-size:12px;color:#8b949e}
 <input name="name" placeholder="Client name" required><button>Add client</button></form></section>
 </main>
 <script>
-async function api(path,opts){const r=await fetch(path,opts);if(!r.ok)throw new Error(await r.text());return r.json()}
+let TOKEN = new URLSearchParams(location.hash.slice(1)).get("token") || localStorage.getItem("stockline_admin_token") || "";
+function authHeaders(extra){const h=Object.assign({},extra||{}); if(TOKEN) h.Authorization="Bearer "+TOKEN; return h}
+async function api(path,opts){opts=opts||{};opts.headers=authHeaders(opts.headers);const r=await fetch(path,opts);if(r.status===401){showLogin();throw new Error("Unauthorized")}if(!r.ok)throw new Error(await r.text());return r.json()}
+function showLogin(){const el=document.getElementById("login");if(el)el.style.display="block"}
+async function doLogin(event){event.preventDefault();const u=document.getElementById("admin-user").value;const p=document.getElementById("admin-pass").value;const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});if(!r.ok){document.getElementById("login-error").textContent="Invalid credentials";return}const data=await r.json();TOKEN=data.token;localStorage.setItem("stockline_admin_token",TOKEN);document.getElementById("login").style.display="none";document.getElementById("login-error").textContent="";refresh()}
 async function refresh(){
  const s=await api('/admin/whatsapp/status');
  const el=document.getElementById('wa-status');el.textContent=s.status;
@@ -87,22 +101,32 @@ async function addClient(e){e.preventDefault();const f=new FormData(e.target);
  await api('/admin/clients',{method:'POST',headers:{'Content-Type':'application/json'},
  body:JSON.stringify({client_id:f.get('id'),phone_number:f.get('phone'),client_name:f.get('name')})});
  e.target.reset();refresh()}
-refresh();setInterval(refresh,3000);
+if(TOKEN){document.getElementById("login").style.display="none";refresh();setInterval(refresh,3000)}else{showLogin()}
 </script></body></html>"""
 
 
-def _admin(user: str = Depends(verify_token)) -> str:
-    expected = os.environ.get("STOCKLINE_ADMIN_USER")
-    if not expected:
-        raise HTTPException(status_code=503, detail="STOCKLINE_ADMIN_USER is not configured")
-    if user != expected:
-        raise HTTPException(status_code=403, detail="Admin role required")
+def _staff(user: str = Depends(verify_token)) -> str:
     return user
 
 
-@router.get("", response_class=HTMLResponse)
-async def index(_: str = Depends(_admin)) -> HTMLResponse:
-    return HTMLResponse(PAGE)
+def _admin(user: str = Depends(require_admin)) -> str:
+    return user
+
+
+@router.get("")
+async def index() -> RedirectResponse:
+    frontend_url = os.environ.get("STOCKLINE_FRONTEND_URL", "http://localhost:5173/")
+    return RedirectResponse(url=frontend_url, status_code=307)
+
+
+@router.get("/assets/{filename}")
+async def admin_asset(filename: str) -> FileResponse:
+    if Path(filename).name != filename:
+        raise HTTPException(status_code=404, detail="Not found")
+    path = ADMIN_ASSETS / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path)
 
 
 @router.get("/whatsapp/status")
@@ -153,8 +177,10 @@ async def get_config(_: str = Depends(_admin)) -> dict[str, Any]:
 async def set_config(payload: dict[str, Any], _: str = Depends(_admin)) -> dict[str, str]:
     path = CONFIG.config_path
     backup = Path("/tmp") / f"config.jsonc.{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.bak"
-    backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-    data = json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_text(encoding="utf-8")
+    backup.write_text(raw, encoding="utf-8")
+    parsed = json5.loads(raw)
+    data = dict(parsed) if isinstance(parsed, dict) else {}
     for key in ("selection", "settings", "runtime"):
         if key in payload:
             data[key] = payload[key]
@@ -163,7 +189,7 @@ async def set_config(payload: dict[str, Any], _: str = Depends(_admin)) -> dict[
 
 
 @router.get("/products")
-async def list_products(_: str = Depends(_admin)) -> list[dict[str, Any]]:
+async def list_products(_: str = Depends(_staff)) -> list[dict[str, Any]]:
     return await db.fetch_products()
 
 
@@ -172,32 +198,139 @@ async def create_product(payload: dict[str, Any], _: str = Depends(_admin)) -> d
     await db.pool().execute(
         "INSERT INTO product(product_id,product_name,price,stock) VALUES($1,$2,$3,$4) "
         "ON CONFLICT(product_id) DO UPDATE SET product_name=$2,price=$3,stock=$4",
-        payload["product_id"],
-        payload["product_name"],
+        str(payload["product_id"]).strip(),
+        str(payload["product_name"]).strip(),
         float(payload["price"]),
         float(payload["stock"]),
     )
     return {"status": "ok"}
 
 
+@router.delete("/products/{product_id}")
+async def remove_product(product_id: str, _: str = Depends(_admin)) -> dict[str, str]:
+    deleted = await db.delete_product(product_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {"status": "deleted"}
+
+
 @router.get("/clients")
-async def list_clients(_: str = Depends(_admin)) -> list[dict[str, Any]]:
+async def list_clients(_: str = Depends(_staff)) -> list[dict[str, Any]]:
     rows = await db.pool().fetch(
-        "SELECT client_id, phone_number, client_name FROM client ORDER BY client_id"
+        """SELECT cl.client_id, cl.phone_number, cl.client_name,
+                  COUNT(c.command_id) AS order_count,
+                  COALESCE(SUM(c.price * c.quantity), 0) AS total_spent,
+                  MAX(c.recorded_at) AS last_order_at,
+                  COALESCE(
+                      (array_agg(c.product_id ORDER BY c.recorded_at DESC)
+                       FILTER (WHERE c.product_id IS NOT NULL))[1],
+                      ''
+                  ) AS usual_product
+           FROM client cl
+           LEFT JOIN command c ON c.client_id = cl.client_id
+           GROUP BY cl.client_id, cl.phone_number, cl.client_name
+           ORDER BY cl.client_id"""
     )
-    return [dict(r) for r in rows]
+    return [
+        {
+            "client_id": r["client_id"],
+            "phone_number": r["phone_number"],
+            "client_name": r["client_name"],
+            "order_count": int(r["order_count"] or 0),
+            "total_spent": float(r["total_spent"] or 0),
+            "last_order_at": r["last_order_at"],
+            "usual_product": r["usual_product"] or "",
+        }
+        for r in rows
+    ]
+
+
+@router.get("/clients/{client_id}/detail")
+async def client_detail(client_id: str, _: str = Depends(_staff)) -> dict[str, Any]:
+    client = await db.pool().fetchrow(
+        "SELECT client_id, phone_number, client_name FROM client WHERE client_id = $1",
+        client_id,
+    )
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    stats = await db.fetch_client_stats(client_id)
+    commands = await db.fetch_recent_commands(client_id, 50)
+    return {
+        "client": dict(client),
+        "stats": stats,
+        "commands": commands,
+    }
 
 
 @router.post("/clients")
 async def create_client(payload: dict[str, Any], _: str = Depends(_admin)) -> dict[str, str]:
+    phone = "".join(ch for ch in str(payload["phone_number"]) if ch.isdigit())
+    if not phone:
+        raise HTTPException(status_code=400, detail="Valid phone_number required")
     await db.pool().execute(
         "INSERT INTO client(client_id,phone_number,client_name) VALUES($1,$2,$3) "
         "ON CONFLICT(client_id) DO UPDATE SET phone_number=$2,client_name=$3",
-        payload["client_id"],
-        payload["phone_number"],
-        payload["client_name"],
+        str(payload["client_id"]).strip(),
+        phone,
+        str(payload["client_name"]).strip(),
     )
     return {"status": "ok"}
+
+
+@router.delete("/clients/{client_id}")
+async def remove_client(client_id: str, _: str = Depends(_admin)) -> dict[str, str]:
+    deleted = await db.delete_client(client_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return {"status": "deleted"}
+
+
+@router.get("/managers")
+async def managers(_: str = Depends(_admin)) -> list[dict[str, Any]]:
+    return await db.list_managers()
+
+
+@router.post("/managers")
+async def create_manager(payload: dict[str, Any], _: str = Depends(_admin)) -> dict[str, str]:
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", ""))
+    if not username or len(password) < 6:
+        raise HTTPException(status_code=400, detail="username and password (min 6) required")
+    await db.upsert_manager(username, hash_password(password), True)
+    return {"status": "ok"}
+
+
+@router.put("/managers/{username}")
+async def update_manager(
+    username: str, payload: dict[str, Any], _: str = Depends(_admin)
+) -> dict[str, str]:
+    existing = await db.fetch_manager(username)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Manager not found")
+    password = payload.get("password")
+    active = payload.get("is_active")
+    await db.upsert_manager(
+        username,
+        hash_password(str(password)) if password else existing["password_hash"],
+        bool(active) if active is not None else bool(existing["is_active"]),
+    )
+    return {"status": "ok"}
+
+
+@router.delete("/managers/{username}")
+async def remove_manager(username: str, _: str = Depends(_admin)) -> dict[str, str]:
+    deleted = await db.delete_manager(username)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Manager not found")
+    return {"status": "deleted"}
+
+
+@router.get("/pipeline/logs")
+async def pipeline_logs(
+    limit: int = Query(100, ge=1, le=300), _: str = Depends(_staff)
+) -> dict[str, Any]:
+    logs = await db.fetch_pipeline_logs(limit)
+    return {"items": logs, "memory": BUS.history(limit)}
 
 
 @router.get("/config/download")

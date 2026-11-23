@@ -12,11 +12,12 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import makeWASocket, {
   type AnyMessageContent,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys'
@@ -37,6 +38,7 @@ interface Signal {
   texte: string
   cNumber: string
   message_id: string
+  media_path?: string
 }
 
 interface SendRequest {
@@ -47,12 +49,50 @@ interface SendRequest {
 let sock: ReturnType<typeof makeWASocket> | null = null
 let currentQr: { dataUrl: string; at: number } | null = null
 let status = 'disconnected'
+const seenMessageIds = new Set<string>()
 
 function canonicalPhone(value: string): string {
-  return value.replace(/[^0-9]/g, '')
+  const userPart = value.split('@')[0].split(':')[0]
+  return userPart.replace(/[^0-9]/g, '')
 }
 
-function extract(message: any): { text: string; modality: string } {
+function resolveSenderPhone(key: any): string {
+  const alt = key?.remoteJidAlt || key?.senderPn || ''
+  if (typeof alt === 'string' && alt.endsWith('@s.whatsapp.net')) {
+    return canonicalPhone(alt)
+  }
+  const jid = String(key?.remoteJid || '')
+  if (jid.endsWith('@s.whatsapp.net')) {
+    return canonicalPhone(jid)
+  }
+  if (jid.endsWith('@lid')) {
+    const lid = canonicalPhone(jid)
+    const reverseFile = join(STATE_DIR, `lid-mapping-${lid}_reverse.json`)
+    if (existsSync(reverseFile)) {
+      try {
+        const mapped = JSON.parse(readFileSync(reverseFile, 'utf8'))
+        if (typeof mapped === 'string' && mapped.trim()) {
+          return canonicalPhone(mapped)
+        }
+      } catch (error) {
+        console.error('[wa] lid reverse lookup failed', error)
+      }
+    }
+    return lid
+  }
+  return canonicalPhone(jid)
+}
+
+function unwrapMessage(raw: any): any {
+  if (!raw) return raw
+  if (raw.ephemeralMessage?.message) return unwrapMessage(raw.ephemeralMessage.message)
+  if (raw.viewOnceMessage?.message) return unwrapMessage(raw.viewOnceMessage.message)
+  if (raw.viewOnceMessageV2?.message) return unwrapMessage(raw.viewOnceMessageV2.message)
+  return raw
+}
+
+function extract(rawMessage: any): { text: string; modality: string } {
+  const message = unwrapMessage(rawMessage)
   if (message?.conversation) return { text: message.conversation, modality: 'text' }
   if (message?.extendedTextMessage?.text) {
     return { text: message.extendedTextMessage.text, modality: 'text' }
@@ -60,7 +100,10 @@ function extract(message: any): { text: string; modality: string } {
   if (message?.audioMessage || message?.voiceMessage) {
     return { text: '[voice]', modality: 'audio' }
   }
-  if (message?.imageMessage) return { text: '[image]', modality: 'image' }
+  if (message?.imageMessage) {
+    const caption = String(message.imageMessage.caption || '').trim()
+    return { text: caption || '[image]', modality: 'image' }
+  }
   return { text: '', modality: 'unknown' }
 }
 
@@ -117,20 +160,57 @@ async function connect(): Promise<void> {
     if (type !== 'notify') return
     for (const message of messages) {
       if (!message.message || message.key.fromMe) continue
-      const jid = message.key.remoteJid || ''
-      const cNumber = canonicalPhone(jid)
+      const msgId = String(message.key.id || '')
+      if (msgId) {
+        if (seenMessageIds.has(msgId)) {
+          console.log(`[wa] skipping duplicate message ${msgId}`)
+          continue
+        }
+        seenMessageIds.add(msgId)
+        if (seenMessageIds.size > 2000) {
+          const oldest = seenMessageIds.values().next().value
+          if (oldest) seenMessageIds.delete(oldest)
+        }
+      }
+      const jid = String(message.key.remoteJid || '')
+      if (!jid || jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid === 'status@broadcast') {
+        continue
+      }
+      const cNumber = resolveSenderPhone(message.key)
+      if (!cNumber) continue
       if (PHONE && cNumber !== canonicalPhone(PHONE)) continue
       const { text, modality } = extract(message.message)
+      if (!text || modality === 'unknown') continue
+      let mediaPath = ''
+      if (modality === 'audio' || modality === 'image') {
+        try {
+          const safeId = (msgId || `evt_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '')
+          const ext = modality === 'audio' ? 'ogg' : 'png'
+          mediaPath = `/tmp/wa_media_${safeId}.${ext}`
+          const buffer = await downloadMediaMessage(message, 'buffer', {})
+          writeFileSync(mediaPath, buffer as Buffer)
+          console.log(
+            `[wa] saved ${modality} media (${(buffer as Buffer).length} bytes) to ${mediaPath}`
+          )
+        } catch (error) {
+          console.error(`[wa] ${modality} media download failed`, error)
+          mediaPath = ''
+        }
+      }
       const signal: Signal = {
-        evenement_id: message.key.id || `evt_${Date.now()}`,
+        evenement_id: msgId || `evt_${Date.now()}`,
         capture_le: new Date().toISOString(),
         canal: 'whatsapp',
-        actor_ref: jid,
+        actor_ref: cNumber,
         modality,
         texte: text,
         cNumber,
-        message_id: message.key.id || '',
+        message_id: msgId,
+        media_path: mediaPath,
       }
+      console.log(
+        `[wa] posting signal id=${signal.evenement_id} phone=${cNumber} modality=${modality} media=${mediaPath || 'none'}`
+      )
       await postSignal(signal)
     }
   })
@@ -163,7 +243,7 @@ const server = createServer(async (request, response) => {
     return
   }
   if (request.method === 'GET' && request.url === '/qr') {
-    if (!currentQr || Date.now() - currentQr.at > 60_000) {
+    if (!currentQr || Date.now() - currentQr.at > 300_000) {
       sendJson(response, 404, { error: 'no QR available' })
       return
     }
@@ -184,14 +264,22 @@ const server = createServer(async (request, response) => {
     return
   }
   if (request.method === 'POST' && request.url === '/send') {
-    const body = JSON.parse(await readBody(request)) as SendRequest
-    if (!sock) {
-      sendJson(response, 503, { error: 'not connected' })
-      return
+    try {
+      const body = JSON.parse(await readBody(request)) as SendRequest
+      if (!sock || status !== 'connected') {
+        sendJson(response, 503, { error: 'not connected' })
+        return
+      }
+      const rawJid = String(body.jid || '').trim()
+      const targetJid = rawJid.includes('@') ? rawJid : `${canonicalPhone(rawJid)}@s.whatsapp.net`
+      const content: AnyMessageContent = { text: body.text }
+      await sock.sendMessage(targetJid, content)
+      console.log(`[wa] sent notification to ${targetJid}`)
+      sendJson(response, 200, { status: 'sent', jid: targetJid })
+    } catch (error) {
+      console.error('[wa] /send failed', error)
+      sendJson(response, 502, { error: String(error) })
     }
-    const content: AnyMessageContent = { text: body.text }
-    await sock.sendMessage(body.jid, content)
-    sendJson(response, 200, { status: 'sent' })
     return
   }
   sendJson(response, 404, { error: 'not found' })

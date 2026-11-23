@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Stockline Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..600;1,9..40,400&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/assets/app.css">
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="brand-lockup">
+        <span class="brand-mark large" aria-hidden="true">S</span>
+        <span class="brand-name">Stockline</span>
+      </div>
+      <h1>Sign in to Admin</h1>
+      <p class="muted">Manage wholesale orders, catalogue prices, clients and your WhatsApp link.</p>
+      <form id="login-form" class="stack">
+        <label>Username<input id="login-user" value="admin" autocomplete="username" required></label>
+        <label>Password<input id="login-pass" type="password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit">Sign in</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </div>
+  </div>
+
+  <div id="app-shell" class="app-shell hidden">
+    <header class="site-header">
+      <div class="header-inner">
+        <div class="header-left">
+          <a href="#dashboard" class="brand" data-go="dashboard">
+            <span class="brand-mark" aria-hidden="true">S</span>
+            <span>Stockline</span>
+          </a>
+          <nav id="nav" class="header-nav" aria-label="Primary navigation">
+            <button class="nav-item active" data-page="dashboard" type="button">Dashboard</button>
+            <button class="nav-item" data-page="commands" type="button">Commands</button>
+            <button class="nav-item" data-page="products" type="button">Products</button>
+            <button class="nav-item" data-page="clients" type="button">Clients</button>
+            <button class="nav-item" data-page="pipeline" type="button">Pipeline</button>
+            <button class="nav-item admin-only" data-page="settings" type="button">Settings</button>
+          </nav>
+        </div>
+
+        <div class="header-right">
+          <button id="wa-header-pill" class="pill status-link admin-only" data-go="settings" type="button" title="WhatsApp settings">
+            <span class="dot"></span>
+            <span id="wa-pill-text">WhatsApp</span>
+          </button>
+          <button id="theme-toggle" class="btn ghost small" type="button" aria-label="Switch color theme">Dark mode</button>
+          <span id="user-badge" class="user-chip">admin</span>
+          <button id="logout" class="btn ghost small" type="button">Sign out</button>
+          <button id="menu-toggle" class="btn ghost small menu-toggle" type="button" aria-expanded="false" aria-label="Toggle navigation">Menu</button>
+        </div>
+      </div>
+
+      <nav id="mobile-nav" class="mobile-nav hidden" aria-label="Mobile navigation">
+        <button class="nav-item active" data-page="dashboard" type="button">Dashboard</button>
+        <button class="nav-item" data-page="commands" type="button">Commands</button>
+        <button class="nav-item" data-page="products" type="button">Products</button>
+        <button class="nav-item" data-page="clients" type="button">Clients</button>
+        <button class="nav-item" data-page="pipeline" type="button">Pipeline</button>
+        <button class="nav-item admin-only" data-page="settings" type="button">Settings</button>
+      </nav>
+    </header>
+
+    <main class="main">
+      <div class="page-head">
+        <div>
+          <h1 id="page-title">Dashboard</h1>
+          <p id="page-subtitle" class="muted">Live orders, decision workflow and catalogue health.</p>
+        </div>
+        <div id="page-actions" class="page-actions"></div>
+      </div>
+
+      <section id="page-dashboard" class="page active">
+        <div id="stats-grid" class="kpi-strip"></div>
+        <div class="dashboard-grid">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Incoming &amp; recent commands</h2>
+                <p class="panel-note muted">Approve or reject orders with an optional WhatsApp reply to the buyer.</p>
+              </div>
+              <button class="btn ghost small" data-go="commands" type="button">All commands</button>
+            </div>
+            <div id="dashboard-commands" class="table-wrap"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Decision &amp; pipeline feed</h2>
+                <p class="panel-note muted">Real-time approvals, rejections and WhatsApp intake logs.</p>
+              </div>
+              <button class="btn ghost small" data-go="pipeline" type="button">Open pipeline</button>
+            </div>
+            <div id="dashboard-activity" class="activity-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-commands" class="page">
+        <div class="toolbar">
+          <input id="command-search" class="input" placeholder="Search client, phone, product or summary...">
+          <select id="command-status" class="input narrow">
+            <option value="all">All statuses</option>
+            <option value="new">New (pending)</option>
+            <option value="processed">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <select id="command-client-type" class="input narrow">
+            <option value="all">All clients</option>
+            <option value="new">First-time client</option>
+            <option value="returning">Returning client</option>
+          </select>
+          <button id="refresh-commands" class="btn ghost" type="button">Refresh</button>
+        </div>
+        <div id="commands-table" class="panel table-wrap"></div>
+      </section>
+
+      <section id="page-products" class="page">
+        <div class="split-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Product catalogue</h2>
+              <span id="product-count" class="pill muted">0</span>
+            </div>
+            <div id="products-table" class="table-wrap"></div>
+          </div>
+          <div class="panel admin-only">
+            <div class="panel-head">
+              <h2 id="product-form-title">Add product</h2>
+              <button id="product-cancel" class="btn ghost small hidden" type="button">Cancel</button>
+            </div>
+            <form id="product-form" class="stack">
+              <label>Product ID<input name="product_id" placeholder="ART-TOM-GR-01" required></label>
+              <label>Product name<input name="product_name" placeholder="Tomates grappe" required></label>
+              <label>Unit price (€)<input name="price" type="number" step="0.01" min="0" required></label>
+              <label>Available stock<input name="stock" type="number" step="0.001" min="0" required></label>
+              <button id="product-submit" class="btn primary" type="submit">Save product</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-clients" class="page">
+        <div class="split-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Registered clients</h2>
+                <p class="panel-note muted">Only contacts listed here can trigger the WhatsApp order pipeline. Click a row to open the client profile.</p>
+              </div>
+              <span id="client-count" class="pill muted">0</span>
+            </div>
+            <div id="clients-table" class="table-wrap"></div>
+          </div>
+          <div class="panel admin-only">
+            <div class="panel-head">
+              <h2 id="client-form-title">Add client</h2>
+              <button id="client-cancel" class="btn ghost small hidden" type="button">Cancel</button>
+            </div>
+            <form id="client-form" class="stack">
+              <label>Client ID<input name="client_id" placeholder="CLI-0002" required></label>
+              <label>WhatsApp phone (E.164 digits)<input name="phone_number" placeholder="33745746025" required></label>
+              <label>Client name<input name="client_name" placeholder="Yohann Bikele" required></label>
+              <button id="client-submit" class="btn primary" type="submit">Save client</button>
+            </form>
+          </div>
+        </div>
+
+        <div id="client-inspector" class="panel client-inspector hidden">
+          <div class="panel-head">
+            <div>
+              <h2 id="inspector-name">Client profile</h2>
+              <p id="inspector-meta" class="panel-note muted"></p>
+            </div>
+            <button id="inspector-close" class="btn ghost small" type="button">Close profile</button>
+          </div>
+          <div id="inspector-kpis" class="kpi-strip compact"></div>
+          <div id="inspector-orders" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section id="page-pipeline" class="page">
+        <div class="n8n-workspace">
+          <div class="n8n-toolbar">
+            <div class="n8n-toolbar-left">
+              <span id="sse-indicator" class="pill ok"><span class="dot"></span><span id="sse-text">Live stream</span></span>
+              <span class="n8n-hint muted">Drag any node to rearrange · Drag background to pan · Click a node to inspect</span>
+            </div>
+            <div class="n8n-toolbar-right">
+              <button id="n8n-zoom-out" class="btn ghost small" type="button" title="Zoom out">−</button>
+              <span id="n8n-zoom-label" class="mono muted">100%</span>
+              <button id="n8n-zoom-in" class="btn ghost small" type="button" title="Zoom in">+</button>
+              <button id="n8n-fit" class="btn ghost small" type="button">Tidy layout</button>
+              <button id="pipeline-refresh" class="btn ghost small" type="button">Refresh</button>
+            </div>
+          </div>
+
+          <div id="n8n-viewport" class="n8n-viewport">
+            <div id="n8n-world" class="n8n-world">
+              <svg id="n8n-edges" class="n8n-edges" xmlns="http://www.w3.org/2000/svg"></svg>
+              <div id="n8n-nodes" class="n8n-nodes"></div>
+            </div>
+          </div>
+
+          <div class="n8n-drawer">
+            <div class="n8n-drawer-col">
+              <div class="panel-head">
+                <div>
+                  <h2 id="spec-node-title">Node architecture &amp; schema</h2>
+                  <p id="spec-node-role" class="panel-note muted">Click any node in the graph above to inspect its role, data contract and concrete example.</p>
+                </div>
+                <span id="spec-node-stage" class="pill muted">Architecture</span>
+              </div>
+              <div class="spec-block">
+                <div class="spec-label">Data structure / contract</div>
+                <pre id="spec-node-schema" class="code-block compact"></pre>
+              </div>
+              <div class="spec-block">
+                <div class="spec-label">Concrete example</div>
+                <pre id="spec-node-example" class="code-block compact"></pre>
+              </div>
+            </div>
+
+            <div class="n8n-drawer-col">
+              <div class="panel-head">
+                <div>
+                  <h2 id="node-inspector-title">Live execution payload</h2>
+                  <p id="node-inspector-sub" class="panel-note muted">Real-time data captured on the selected node during the latest requests.</p>
+                </div>
+                <span id="node-run-badge" class="pill muted">0 runs</span>
+              </div>
+              <pre id="node-inspector-json" class="code-block">Select a node on the canvas or an enumerated log item on the right.</pre>
+            </div>
+
+            <div class="n8n-drawer-col">
+              <div class="panel-head">
+                <div>
+                  <h2>Enumerated execution log</h2>
+                  <p class="panel-note muted">Step-by-step trace of all signals, transcriptions, tool calls and decisions.</p>
+                </div>
+                <div class="row-actions">
+                  <button id="log-filter-node" class="btn ghost small" type="button">All nodes</button>
+                  <span id="pipeline-log-count" class="pill muted">0 events</span>
+                </div>
+              </div>
+              <ol id="pipeline-enum-list" class="enum-log-list"></ol>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="page-settings" class="page">
+        <div class="settings-grid">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>WhatsApp line</h2>
+                <p class="panel-note muted">Link the primary WhatsApp number that receives client orders and sends approval notifications.</p>
+              </div>
+              <span id="settings-wa-status" class="pill muted">Checking</span>
+            </div>
+
+            <div class="meta-rows">
+              <div class="meta-row">
+                <span class="muted">Connection status</span>
+                <strong id="settings-wa-state">Checking...</strong>
+              </div>
+              <div class="meta-row">
+                <span class="muted">Linked phone</span>
+                <strong id="settings-wa-phone">Not linked</strong>
+              </div>
+              <div class="meta-row">
+                <span class="muted">Intake rule</span>
+                <strong>Registered clients only (strict phone match)</strong>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button id="wa-connect" class="btn primary" type="button">Generate / refresh QR</button>
+              <button id="wa-disconnect" class="btn ghost" type="button">Disconnect</button>
+            </div>
+          </div>
+
+          <div class="panel qr-panel">
+            <div class="panel-head">
+              <div>
+                <h2>WhatsApp pairing QR</h2>
+                <p class="panel-note muted">When disconnected, scan from WhatsApp → Linked devices.</p>
+              </div>
+            </div>
+            <div id="wa-qr" class="qr-stage"></div>
+          </div>
+        </div>
+
+        <div class="split-layout settings-managers">
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h2>Managers</h2>
+                <p class="panel-note muted">Managers can view the dashboard, commands, catalogue, clients and pipeline, and approve or reject orders. Only the admin can access Settings.</p>
+              </div>
+              <span id="manager-count" class="pill muted">0</span>
+            </div>
+            <div id="managers-table" class="table-wrap"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2 id="manager-form-title">Create manager</h2>
+              <button id="manager-cancel" class="btn ghost small hidden" type="button">Cancel</button>
+            </div>
+            <form id="manager-form" class="stack">
+              <label>Username<input name="username" placeholder="manager-username" required></label>
+              <label>Password<input name="password" type="password" placeholder="Min 6 characters" minlength="6" required></label>
+              <button id="manager-submit" class="btn primary" type="submit">Save manager</button>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/admin/assets/app.js" defer></script>
+</body>
+</html>

@@ -22,7 +22,11 @@ export default function CommandDetail({ command, onDecision, busy }: CommandDeta
   }
 
   const lines = command.order_lines ?? [];
-  const total = lines.reduce((sum, line) => sum + line.quantity * line.daily_price, 0);
+  const total = lines.reduce(
+    (sum, line) => sum + Number(line.quantity || 0) * Number(line.daily_price ?? line.price ?? 0),
+    0,
+  );
+  const cmdId = command.id || command.command_id;
 
   return (
     <div className="detail">
@@ -39,7 +43,7 @@ export default function CommandDetail({ command, onDecision, busy }: CommandDeta
             className="button reject"
             type="button"
             disabled={busy}
-            onClick={() => onDecision(command.id, false)}
+            onClick={() => onDecision(cmdId, false)}
           >
             Reject
           </button>
@@ -47,7 +51,7 @@ export default function CommandDetail({ command, onDecision, busy }: CommandDeta
             className="button approve"
             type="button"
             disabled={busy}
-            onClick={() => onDecision(command.id, true)}
+            onClick={() => onDecision(cmdId, true)}
           >
             Approve
           </button>
@@ -85,15 +89,18 @@ export default function CommandDetail({ command, onDecision, busy }: CommandDeta
             </tr>
           </thead>
           <tbody>
-            {lines.map((line, index) => (
-              <tr key={`${line.article_id}-${index}`}>
-                <td>{line.article_name}</td>
-                <td>{line.article_id}</td>
-                <td>{line.quantity}</td>
-                <td>{line.daily_price}</td>
-                <td>{(line.quantity * line.daily_price).toFixed(2)}</td>
-              </tr>
-            ))}
+            {lines.map((line, index) => {
+              const unitPrice = Number(line.daily_price ?? line.price ?? 0);
+              return (
+                <tr key={`${line.article_id || line.product_id || "line"}-${index}`}>
+                  <td>{line.article_name || line.product_id}</td>
+                  <td>{line.article_id || line.product_id}</td>
+                  <td>{line.quantity}</td>
+                  <td>{unitPrice}</td>
+                  <td>{(line.quantity * unitPrice).toFixed(2)}</td>
+                </tr>
+              );
+            })}
             {lines.length === 0 && (
               <tr>
                 <td colSpan={5} className="empty">No order lines</td>

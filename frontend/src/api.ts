@@ -1,9 +1,14 @@
 import type {
+  ClientAccount,
+  ClientDetail,
   ClientStats,
   Command,
+  ManagerAccount,
   Paginated,
+  PipelineLogItem,
   Product,
   Purchase,
+  WaStatus,
 } from "./types";
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -112,25 +117,121 @@ export const api = {
   health: () => request<{ status: string }>("/health"),
 
   getCommands: async (): Promise<Command[]> => {
-    const payload = await request<unknown>("/api/commands");
+    const payload = await request<unknown>("/api/commands?limit=200");
     return extractItems<Command>(payload);
   },
 
   getCommand: (id: string) =>
     request<Command>(`/api/commands/${encodeURIComponent(id)}`),
 
-  approveCommand: (id: string, approve: boolean) =>
-    request<Command>(`/api/commands/${encodeURIComponent(id)}/approve`, {
+  approveCommand: (id: string, approve: boolean, comment = "") =>
+    request<{
+      command_id: string;
+      status: string;
+      comment: string;
+      decided_by: string;
+      wa_sent: boolean;
+      new_stock?: number | null;
+    }>(`/api/commands/${encodeURIComponent(id)}/approve`, {
       method: "POST",
-      body: JSON.stringify({ approve }),
+      body: JSON.stringify({ approve, comment }),
     }),
 
   getClientStats: (id: string) =>
     request<ClientStats>(`/api/clients/${encodeURIComponent(id)}/stats`),
 
   getProducts: async (): Promise<Product[]> => {
-    const payload = await request<unknown>("/api/products");
+    const payload = await request<unknown>("/admin/products");
     return extractItems<Product>(payload);
+  },
+
+  saveProduct: (product: {
+    product_id: string;
+    product_name: string;
+    price: number;
+    stock: number;
+  }) =>
+    request<{ status: string }>("/admin/products", {
+      method: "POST",
+      body: JSON.stringify(product),
+    }),
+
+  deleteProduct: (id: string) =>
+    request<{ status: string }>(`/admin/products/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  getClients: async (): Promise<ClientAccount[]> => {
+    const payload = await request<unknown>("/admin/clients");
+    return extractItems<ClientAccount>(payload);
+  },
+
+  getClientDetail: (id: string) =>
+    request<ClientDetail>(`/admin/clients/${encodeURIComponent(id)}/detail`),
+
+  saveClient: (client: {
+    client_id: string;
+    phone_number: string;
+    client_name: string;
+  }) =>
+    request<{ status: string }>("/admin/clients", {
+      method: "POST",
+      body: JSON.stringify(client),
+    }),
+
+  deleteClient: (id: string) =>
+    request<{ status: string }>(`/admin/clients/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  getManagers: async (): Promise<ManagerAccount[]> => {
+    const payload = await request<unknown>("/admin/managers");
+    return extractItems<ManagerAccount>(payload);
+  },
+
+  createManager: (payload: { username: string; password: string }) =>
+    request<{ status: string }>("/admin/managers", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateManager: (
+    username: string,
+    payload: { password?: string; is_active?: boolean },
+  ) =>
+    request<{ status: string }>(
+      `/admin/managers/${encodeURIComponent(username)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      },
+    ),
+
+  deleteManager: (username: string) =>
+    request<{ status: string }>(
+      `/admin/managers/${encodeURIComponent(username)}`,
+      {
+        method: "DELETE",
+      },
+    ),
+
+  waStatus: () => request<WaStatus>("/admin/whatsapp/status"),
+
+  waQr: () => request<{ qr: string }>("/admin/whatsapp/qr"),
+
+  waConnect: () =>
+    request<{ status: string }>("/admin/whatsapp/connect", { method: "POST" }),
+
+  waDisconnect: () =>
+    request<{ status: string }>("/admin/whatsapp/disconnect", {
+      method: "POST",
+    }),
+
+  getPipelineLogs: async (limit = 120): Promise<PipelineLogItem[]> => {
+    const payload = await request<{ items?: PipelineLogItem[] }>(
+      `/admin/pipeline/logs?limit=${limit}`,
+    );
+    return payload?.items || [];
   },
 
   getPurchases: async (): Promise<Purchase[]> => {
@@ -145,12 +246,12 @@ export const api = {
     }),
 
   login: (username: string, password: string) =>
-    request<{ token: string }>("/api/auth/login", {
+    request<{ token: string; role?: string }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
     }),
 
-  me: () => request<{ username: string }>("/api/auth/me"),
+  me: () => request<{ username: string; role?: string }>("/api/auth/me"),
 
   createCall: () => request<{ call_id: string }>("/api/calls", { method: "POST" }),
 };

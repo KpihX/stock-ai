@@ -30,18 +30,21 @@ export default function CommandList({
       </h2>
       <div className="list-body">
         {commands.length === 0 && <p className="empty">{emptyMessage}</p>}
-        {commands.map((command) => (
-          <button
-            key={command.id}
-            type="button"
-            className={`list-item${command.id === selectedId ? " selected" : ""}`}
-            onClick={() => onSelect(command.id)}
-          >
-            <span className="item-primary">{command.client_name || command.client_id}</span>
-            <span className="item-secondary">{formatDate(command.recorded_at)}</span>
-            <span className="item-meta">{command.order_lines?.length ?? 0} lines</span>
-          </button>
-        ))}
+        {commands.map((command) => {
+          const cid = command.id || command.command_id;
+          return (
+            <button
+              key={cid}
+              type="button"
+              className={`list-item${cid === selectedId ? " selected" : ""}`}
+              onClick={() => onSelect(cid)}
+            >
+              <span className="item-primary">{command.client_name || command.client_id}</span>
+              <span className="item-secondary">{formatDate(command.recorded_at)}</span>
+              <span className="item-meta">{command.order_lines?.length ?? 0} lines</span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
