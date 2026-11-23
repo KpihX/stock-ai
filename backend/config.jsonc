@@ -36,37 +36,75 @@
     },
     "stt": {
       "language": "fr",
+      "sample_rate": 16000,
+      "punctuation": true,
       "fallback": "whisper",
       "bin": "whisper-cli",
-      "models_dir": "/app/models/whisper"
+      "models_dir": "/app/models/whisper",
+      "prompt": "Commande alimentaire grossiste en français. Unités : kilos, kg, pièces, unités, caisses, pour demain, lundi, mardi soir, mercredi."
     },
     "ocr": {
       "languages": "eng+fra",
       "fallback": "tesseract",
-      "bin": "tesseract"
+      "bin": "tesseract",
+      "temperature": 0.0,
+      "max_tokens": 512,
+      "enable_thinking": false,
+      "timeout_seconds": 60.0
     },
     "tts": {
       "voice": "fr-FR-DeniseNeural"
     },
     "agent_llm": {
       "model": "nvidia/nemotron-3-ultra-550b-a55b",
-      "base_url": "https://integrate.api.nvidia.com/v1"
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "temperature": 0,
+      "max_tokens": 4000
     }
   },
+
+  // Prompt for Vision / OCR handwritten & printed order extraction.
+  "ocr_prompt": "You are a precision OCR and handwritten order reader for a French food wholesaler. Transcribe verbatim every product, quantity, unit, client note, and delivery date visible on the image (handwritten, cursive, or printed). Reply with the extracted text only.",
 
   // Prompt of the normalization node. Kept in config, never in code.
   "system_prompt": "You convert a wholesale food order or order adjustment into a structured JSON action. The user message contains the raw client message (text, STT voice transcript, or OCR text), `client_stats` (`last_order_lines` = strictly the client's most recent order; `usual_lines` = one habitual line per distinct product ordered by this client), `open_commands` (the client's existing orders that can be modified or cancelled), and `products` (the full database product catalogue with product_id, product_name, price, stock). Always match items against `products`, correcting phonetic speech-to-text or OCR errors using `products` (e.g. 'tomates gras'/'tomates grap' -> 'Tomates grappe' ART-TOM-GR-01; 'ma dix soir'/'maldi soir' -> Tuesday delivery). INTENT DETECTION RULES: (1) If the client wants to modify, adjust, correct or change an existing/previous order (e.g. 'finalement mets 5 pains au lieu de 2', 'modifie ma commande', 'sur ma commande de mardi mets 8 tomates', 'corrige ma dernière commande'), set `action` to 'modify', set `target_command_id` to the matching command_id from `open_commands` (or the most recent one), and put the updated complete lines in `order_lines`. (2) If the client wants to cancel an existing order (e.g. 'annule ma commande', 'annule ma dernière commande'), set `action` to 'cancel', set `target_command_id` to the matching command_id from `open_commands`, and set `order_lines` to `[]`. (3) Otherwise set `action` to 'create' and `target_command_id` to `null`. HABIT RULES: If the client asks for 'comme la dernière fois' / 'la même commande que la dernière fois', repeat `client_stats.last_order_lines`. If the client asks for 'comme d habitude' (optionally filtering a product, e.g. 'comme d habitude pour mes tomates'), use `client_stats.usual_lines`. If the client names a specific product and quantity, NEVER copy an unrelated product from past orders. Return a single JSON object with keys: `action` ('create' | 'modify' | 'cancel'), `target_command_id` (string or null), `summary` (one precise French sentence with action, article, quantity, unit price and delivery date), and `order_lines` (array of objects with keys product_id, quantity, price, recorded_at, delivery_date).",
 
   // Optional per-provider overrides. Resolution order for a parameter is:
   // overrides.<brick>.<selected provider> -> settings.<brick> -> registry default.
-  // Example: switch selection.tts to "piper" and uncomment the block below.
+  // Edit any parameter or switch selection.* above with zero code changes.
   "overrides": {
-    // "stt": {
-    //   "whisper": { "model": "ggml-large-v3-turbo-q5_0.bin", "language": "fr" }
-    // },
-    // "ocr": {
-    //   "tesseract": { "languages": "eng+fra" }
-    // },
+    "stt": {
+      "nvidia_whisper": {
+        "model": "openai/whisper-large-v3",
+        "base_url": "grpc.nvcf.nvidia.com:443",
+        "function_id": "b702f636-f60c-4a3d-a6f4-f3568c13bd7d",
+        "language": "fr"
+      },
+      "nvidia_parakeet": {
+        "model": "nvidia/parakeet-1.1b-rnnt-multilingual-asr",
+        "base_url": "grpc.nvcf.nvidia.com:443",
+        "function_id": "71203149-d3b7-4460-8231-1be2543a1fca",
+        "language": "multi"
+      },
+      "whisper": {
+        "model": "ggml-large-v3-turbo-q5_0.bin",
+        "language": "fr",
+        "bin": "whisper-cli"
+      }
+    },
+    "ocr": {
+      "nemotron_vl": {
+        "model": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "temperature": 0.0,
+        "max_tokens": 512,
+        "enable_thinking": false
+      },
+      "tesseract": {
+        "languages": "eng+fra",
+        "bin": "tesseract"
+      }
+    }
     // "tts": {
     //   "piper": { "voice": "fr_FR-siwis-medium" }
     // }

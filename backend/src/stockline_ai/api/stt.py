@@ -15,31 +15,7 @@ from typing import Any
 
 import riva.client
 
-from ..config import CONFIG, Config, get_secret
-from ..providers import get_spec
-
-
-def _provider_param(cfg: Config, provider_key: str, name: str, default: str = "") -> str:
-    override = (cfg.overrides.get("stt") or {}).get(provider_key) or {}
-    if name in override:
-        return str(override[name])
-    settings = cfg.settings.get("stt") or {}
-    if name in settings and name not in ("model", "base_url", "function_id"):
-        return str(settings[name])
-    spec = get_spec("stt", provider_key)
-    if name == "model" and provider_key == cfg.provider("stt") and "model" in settings:
-        return str(settings["model"])
-    val = getattr(spec, name, None)
-    return str(val) if val else default
-
-
-def _provider_api_key(provider_key: str) -> str:
-    spec = get_spec("stt", provider_key)
-    for env_name in spec.api_key_env:
-        val = get_secret(env_name, required=False)
-        if val:
-            return val
-    return ""
+from ..config import Config, get_config
 
 
 def _riva_recognize_sync(
@@ -48,6 +24,8 @@ def _riva_recognize_sync(
     function_id: str,
     api_key: str,
     language_code: str,
+    sample_rate: int,
+    punctuation: bool,
 ) -> str:
     auth = riva.client.Auth(
         use_ssl=True,
@@ -60,10 +38,10 @@ def _riva_recognize_sync(
     asr = riva.client.ASRService(auth)
     rec_cfg = riva.client.RecognitionConfig(
         encoding=riva.client.AudioEncoding.LINEAR_PCM,
-        sample_rate_hertz=16000,
+        sample_rate_hertz=sample_rate,
         language_code=language_code,
         max_alternatives=1,
-        enable_automatic_punctuation=True,
+        enable_automatic_punctuation=punctuation,
     )
     response = asr.offline_recognize(audio_bytes, rec_cfg)
     results = getattr(response, "results", None) or []
@@ -81,16 +59,15 @@ async def _run_nvidia_riva(
     cfg: Config,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
-    uri = _provider_param(cfg, provider_key, "base_url", "grpc.nvcf.nvidia.com:443")
-    function_id = _provider_param(cfg, provider_key, "function_id")
-    model = _provider_param(cfg, provider_key, "model")
-    lang_default = "multi" if provider_key == "nvidia_parakeet" else "fr"
-    language = _provider_param(cfg, provider_key, "language", lang_default)
-    api_key = _provider_api_key(provider_key)
-    if not api_key:
-        raise RuntimeError(f"Missing NVIDIA_API_KEY for STT provider '{provider_key}'")
-    if not function_id:
-        raise RuntimeError(f"Missing function_id for STT provider '{provider_key}'")
+    uri = str(cfg.provider_param("stt", provider_key, "base_url"))
+    function_id = str(cfg.provider_param("stt", provider_key, "function_id"))
+    model = str(cfg.provider_param("stt", provider_key, "model"))
+    language = str(cfg.provider_param("stt", provider_key, "language", "fr"))
+    sample_rate = int(cfg.provider_param("stt", provider_key, "sample_rate", 16000))
+    punctuation = bool(cfg.provider_param("stt", provider_key, "punctuation", True))
+    api_key = cfg.provider_api_key("stt", provider_key, required=True)
+    if not function_id or not uri:
+        raise RuntimeError(f"Missing base_url/function_id for STT provider '{provider_key}'")
 
     audio_bytes = wav_path.read_bytes()
     transcript = await asyncio.to_thread(
@@ -100,6 +77,8 @@ async def _run_nvidia_riva(
         function_id,
         api_key,
         language,
+        sample_rate,
+        punctuation,
     )
     return {
         "text": transcript,
@@ -117,17 +96,13 @@ async def _run_local_whisper(
     cfg: Config,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
-    whisper_bin = _provider_param(cfg, "whisper", "bin", "whisper-cli") or "whisper-cli"
-    model_name = _provider_param(cfg, "whisper", "model", "ggml-large-v3-turbo-q5_0.bin")
-    language = _provider_param(cfg, "whisper", "language", "fr") or "fr"
+    whisper_bin = str(cfg.provider_param("stt", "whisper", "bin", "whisper-cli"))
+    model_name = str(cfg.provider_param("stt", "whisper", "model"))
+    language = str(cfg.provider_param("stt", "whisper", "language", "fr"))
+    base_prompt = str(cfg.provider_param("stt", "whisper", "prompt", ""))
     model_path = cfg.stt_models_dir / model_name
-    vocab = (
-        ", ".join(product_names) if product_names else "pain de campagne, tomates grappe, cabillaud"
-    )
-    prompt = (
-        f"Commande alimentaire grossiste en français. Catalogue : {vocab}. "
-        "Unités : kilos, kg, pièces, unités, caisses, pour demain, lundi, mardi soir, mercredi."
-    )
+    vocab = ", ".join(product_names)
+    prompt = f"{base_prompt} Catalogue : {vocab}.".strip() if vocab else base_prompt
     proc = await asyncio.create_subprocess_exec(
         whisper_bin,
         "-m",
@@ -175,26 +150,29 @@ async def transcribe_wav(
     wav_path: Path,
     product_names: list[str],
     *,
-    cfg: Config = CONFIG,
+    cfg: Config | None = None,
 ) -> dict[str, Any]:
     """Transcribe a 16 kHz mono WAV file using the active STT brick (with optional fallback)."""
+    active_cfg = cfg or get_config()
     if not wav_path.is_file():
         return {"text": "", "error": f"WAV file not found: {wav_path}"}
 
-    primary = cfg.provider("stt")
+    primary = active_cfg.provider("stt")
     try:
-        return await _dispatch_wav(wav_path, primary, product_names, cfg)
+        return await _dispatch_wav(wav_path, primary, product_names, active_cfg)
     except Exception as exc:
-        fallback = cfg.fallback_for("stt")
+        fallback = active_cfg.fallback_for("stt")
         if fallback and fallback != primary:
-            res = await _dispatch_wav(wav_path, fallback, product_names, cfg)
+            res = await _dispatch_wav(wav_path, fallback, product_names, active_cfg)
             res["fallback_from"] = primary
             res["primary_error"] = str(exc)
             return res
         return {"text": "", "provider": primary, "error": str(exc)}
 
 
-async def convert_to_wav16k(media_path: str) -> tuple[Path | None, str]:
+async def convert_to_wav16k(
+    media_path: str, *, sample_rate: int = 16000
+) -> tuple[Path | None, str]:
     """Convert any audio container (.ogg, .webm, .mp3) to 16 kHz mono 16-bit PCM WAV."""
     path = Path(media_path)
     if not path.is_file():
@@ -208,7 +186,7 @@ async def convert_to_wav16k(media_path: str) -> tuple[Path | None, str]:
         "-i",
         str(path),
         "-ar",
-        "16000",
+        str(sample_rate),
         "-ac",
         "1",
         "-acodec",
@@ -227,10 +205,14 @@ async def transcribe_media(
     media_path: str,
     product_names: list[str],
     *,
-    cfg: Config = CONFIG,
+    cfg: Config | None = None,
 ) -> dict[str, Any]:
     """Convert audio media if needed, then transcribe via the active STT provider."""
-    wav_path, err = await convert_to_wav16k(media_path)
+    active_cfg = cfg or get_config()
+    sample_rate = int(
+        active_cfg.provider_param("stt", active_cfg.provider("stt"), "sample_rate", 16000)
+    )
+    wav_path, err = await convert_to_wav16k(media_path, sample_rate=sample_rate)
     if wav_path is None:
-        return {"text": "", "provider": cfg.provider("stt"), "error": err}
-    return await transcribe_wav(wav_path, product_names, cfg=cfg)
+        return {"text": "", "provider": active_cfg.provider("stt"), "error": err}
+    return await transcribe_wav(wav_path, product_names, cfg=active_cfg)

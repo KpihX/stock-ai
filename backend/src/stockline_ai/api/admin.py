@@ -17,7 +17,7 @@ import json5
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 
-from ..config import CONFIG
+from ..config import get_config as load_live_config
 from . import db
 from .auth import hash_password, require_admin, verify_token
 from .events import BUS
@@ -166,25 +166,30 @@ async def wa_disconnect(_: str = Depends(_admin)) -> dict[str, str]:
 
 @router.get("/config")
 async def get_config(_: str = Depends(_admin)) -> dict[str, Any]:
+    cfg = load_live_config()
     return {
-        "selection": CONFIG.selection,
-        "settings": CONFIG.settings,
-        "runtime": CONFIG.runtime,
+        "selection": cfg.selection,
+        "settings": cfg.settings,
+        "overrides": cfg.overrides,
+        "runtime": cfg.runtime,
+        "system_prompt": cfg.system_prompt,
+        "ocr_prompt": cfg.ocr_prompt,
     }
 
 
 @router.post("/config")
 async def set_config(payload: dict[str, Any], _: str = Depends(_admin)) -> dict[str, str]:
-    path = CONFIG.config_path
+    path = load_live_config().config_path
     backup = Path("/tmp") / f"config.jsonc.{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.bak"
     raw = path.read_text(encoding="utf-8")
     backup.write_text(raw, encoding="utf-8")
     parsed = json5.loads(raw)
     data = dict(parsed) if isinstance(parsed, dict) else {}
-    for key in ("selection", "settings", "runtime"):
+    for key in ("selection", "settings", "overrides", "runtime", "system_prompt", "ocr_prompt"):
         if key in payload:
             data[key] = payload[key]
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    load_live_config(path)
     return {"status": "updated", "backup": str(backup)}
 
 
@@ -335,5 +340,5 @@ async def pipeline_logs(
 
 @router.get("/config/download")
 async def download_config(_: str = Depends(_admin)) -> HTMLResponse:
-    content = CONFIG.config_path.read_text(encoding="utf-8")
+    content = load_live_config().config_path.read_text(encoding="utf-8")
     return HTMLResponse(f"<pre>{content}</pre>")

@@ -13,7 +13,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.chat.chat_completion_tool_union_param import ChatCompletionToolUnionParam
 
-from ..config import CONFIG
+from ..config import get_config
 
 TOOLS: list[ChatCompletionToolUnionParam] = [
     {
@@ -57,16 +57,17 @@ TOOLS: list[ChatCompletionToolUnionParam] = [
 
 
 def _system_prompt() -> str:
-    prompt = CONFIG.system_prompt
+    prompt = get_config().system_prompt
     if not prompt:
         raise RuntimeError("system_prompt is missing from config.jsonc")
     return prompt
 
 
 def _client() -> AsyncOpenAI:
+    cfg = get_config()
     return AsyncOpenAI(
-        base_url=CONFIG.base_url_for("agent_llm"),
-        api_key=CONFIG.api_key("agent_llm", required=True),
+        base_url=cfg.base_url_for("agent_llm"),
+        api_key=cfg.api_key("agent_llm", required=True),
     )
 
 
@@ -97,8 +98,11 @@ async def normalize(
     enriched: dict[str, Any], tool_runner: Any, event_logger: Any = None
 ) -> dict[str, Any]:
     """Run the tool-calling loop and return the parsed NormalizedInput payload."""
+    cfg = get_config()
     client = _client()
-    model_name = CONFIG.model_for("agent_llm")
+    model_name = cfg.model_for("agent_llm")
+    temperature = float(cfg.param("agent_llm", "temperature", "0"))
+    max_tokens = int(cfg.param("agent_llm", "max_tokens", "4000"))
     messages: list[ChatCompletionMessageParam] = [
         {"role": "system", "content": _system_prompt()},
         {"role": "user", "content": json.dumps(enriched, ensure_ascii=False, default=str)},
@@ -127,8 +131,8 @@ async def normalize(
             messages=messages,
             tools=TOOLS,
             tool_choice="auto",
-            temperature=0,
-            max_tokens=4000,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         message = response.choices[0].message
         if not message.tool_calls:

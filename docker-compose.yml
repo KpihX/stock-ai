@@ -31,6 +31,7 @@ services:
       STOCKLINE_API_URL: http://localhost:8000
       WHATS_PROXY_STATE_DIR: /app/wa-state
     volumes:
+      - ./backend/config.jsonc:/app/config.jsonc
       - wa_session:/app/wa-state
       - whisper_models:/app/models/whisper
     depends_on:

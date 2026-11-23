@@ -105,3 +105,30 @@ def test_ocr_dispatch_and_fallback(tmp_path: Path) -> None:
             m_tess.assert_awaited_once()
 
     asyncio.run(_run())
+
+
+def test_config_jsonc_exposes_all_editable_params_and_hot_reloads(tmp_path: Path) -> None:
+    import json
+    import time
+
+    from stockline_ai.config import CONFIG, get_config
+
+    assert CONFIG.ocr_prompt
+    assert CONFIG.system_prompt
+    for key in ("nvidia_whisper", "nvidia_parakeet", "whisper"):
+        assert key in (CONFIG.overrides.get("stt") or {})
+        assert CONFIG.provider_param("stt", key, "model")
+    for key in ("nemotron_vl", "tesseract"):
+        assert key in (CONFIG.overrides.get("ocr") or {})
+
+    temp_cfg = tmp_path / "config.jsonc"
+    temp_cfg.write_text(json.dumps({"selection": {"stt": "nvidia_whisper"}}), encoding="utf-8")
+    first = get_config(temp_cfg)
+    assert first.provider("stt") == "nvidia_whisper"
+
+    time.sleep(0.01)
+    temp_cfg.write_text(json.dumps({"selection": {"stt": "nvidia_parakeet"}}), encoding="utf-8")
+    second = get_config(temp_cfg)
+    assert second.provider("stt") == "nvidia_parakeet"
+    # Restore default global cache back to repo config.jsonc
+    get_config(Path(__file__).resolve().parents[1] / "config.jsonc")

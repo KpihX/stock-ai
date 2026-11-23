@@ -15,7 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ..config import CONFIG
+from ..config import get_config
 from . import db, stt
 from .auth import verify_token
 from .pipeline import handle_signal, publish
@@ -62,7 +62,7 @@ def _digits(value: str) -> str:
 
 
 def _wa_calls_url(path: str) -> str:
-    base = str(CONFIG.calls_settings.get("wa_url") or _base_url()).rstrip("/")
+    base = str(get_config().calls_settings.get("wa_url") or _base_url()).rstrip("/")
     if "localhost" in base and _base_url() != "http://localhost:3001":
         base = _base_url().rstrip("/")
     return f"{base}{path}"
@@ -70,7 +70,7 @@ def _wa_calls_url(path: str) -> str:
 
 async def _synthesize_wav_16k(text: str) -> bytes:
     """Synthesize French customer speech into 16 kHz mono 16-bit PCM WAV bytes."""
-    voice = CONFIG.model_for("tts") or "fr-FR-DeniseNeural"
+    voice = get_config().model_for("tts")
     with tempfile.TemporaryDirectory(prefix="stockline_tts_") as tmpdir:
         mp3_path = Path(tmpdir) / "speech.mp3"
         wav_path = Path(tmpdir) / "speech.wav"
@@ -156,7 +156,7 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
             "client_name": client_name,
             "known_client": client is not None,
             "status": "ringing",
-            "mode": str(payload.get("mode", CONFIG.provider("calls"))),
+            "mode": str(payload.get("mode", get_config().provider("calls"))),
             "is_video": bool(payload.get("is_video", False)),
             "is_waiting": bool(payload.get("is_waiting", False)),
             "started_at": datetime.now(UTC).isoformat(),
@@ -193,7 +193,7 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
             "client_name": phone or "Caller",
             "known_client": False,
             "status": "active",
-            "mode": str(payload.get("mode", CONFIG.provider("calls"))),
+            "mode": str(payload.get("mode", get_config().provider("calls"))),
             "started_at": datetime.now(UTC).isoformat(),
             "muted": False,
             "committed": False,
@@ -313,10 +313,11 @@ async def call_webhook(payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/api/calls/config")
 async def get_call_config(_: str = Depends(verify_token)) -> dict[str, Any]:
-    cfg = CONFIG.calls_settings
+    live_cfg = get_config()
+    cfg = live_cfg.calls_settings
     ice_urls = [str(u) for u in (cfg.get("ice_servers") or ["stun:stun.l.google.com:19302"])]
     return {
-        "provider": CONFIG.provider("calls"),
+        "provider": live_cfg.provider("calls"),
         "sample_rate": int(cfg.get("sample_rate", 16000)),
         "webrtc_rate": int(cfg.get("webrtc_rate", 48000)),
         "ice_servers": [{"urls": u} for u in ice_urls],

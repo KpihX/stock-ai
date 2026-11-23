@@ -15,31 +15,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from ..config import CONFIG, Config, get_secret
-from ..providers import get_spec
-
-
-def _provider_param(cfg: Config, provider_key: str, name: str, default: str = "") -> str:
-    override = (cfg.overrides.get("ocr") or {}).get(provider_key) or {}
-    if name in override:
-        return str(override[name])
-    settings = cfg.settings.get("ocr") or {}
-    if name in settings and name not in ("model", "base_url"):
-        return str(settings[name])
-    spec = get_spec("ocr", provider_key)
-    if name == "model" and provider_key == cfg.provider("ocr") and "model" in settings:
-        return str(settings["model"])
-    val = getattr(spec, name, None)
-    return str(val) if val else default
-
-
-def _provider_api_key(provider_key: str) -> str:
-    spec = get_spec("ocr", provider_key)
-    for env_name in spec.api_key_env:
-        val = get_secret(env_name, required=False)
-        if val:
-            return val
-    return ""
+from ..config import Config, get_config
 
 
 def _detect_mime(raw: bytes, path: Path) -> str:
@@ -59,51 +35,45 @@ async def _run_nemotron_vl(
     cfg: Config,
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
-    model = _provider_param(cfg, "nemotron_vl", "model")
-    base_url = _provider_param(cfg, "nemotron_vl", "base_url")
-    api_key = _provider_api_key("nemotron_vl")
-    if not api_key:
-        raise RuntimeError("Missing NVIDIA_API_KEY for OCR provider 'nemotron_vl'")
+    model = str(cfg.provider_param("ocr", "nemotron_vl", "model"))
+    base_url = str(cfg.provider_param("ocr", "nemotron_vl", "base_url"))
+    temperature = float(cfg.provider_param("ocr", "nemotron_vl", "temperature", 0.0))
+    max_tokens = int(cfg.provider_param("ocr", "nemotron_vl", "max_tokens", 512))
+    enable_thinking = bool(cfg.provider_param("ocr", "nemotron_vl", "enable_thinking", False))
+    timeout_s = float(cfg.provider_param("ocr", "nemotron_vl", "timeout_seconds", 60.0))
+    ocr_prompt = str(
+        cfg.provider_param("ocr", "nemotron_vl", "prompt", cfg.ocr_prompt) or cfg.ocr_prompt
+    )
+    if not ocr_prompt:
+        raise RuntimeError("ocr_prompt is missing from config.jsonc")
+    api_key = cfg.provider_api_key("ocr", "nemotron_vl", required=True)
 
     raw = path.read_bytes()
     mime = _detect_mime(raw, path)
     b64 = base64.b64encode(raw).decode("ascii")
-    vocab = (
-        ", ".join(product_names)
-        if product_names
-        else "Pain de campagne, Tomates grappe, Cabillaud 3/5"
+    vocab = ", ".join(product_names)
+    user_text = (
+        f"Catalogue reference: {vocab}. Transcribe all text visible on this order image."
+        if vocab
+        else "Transcribe all text visible on this order image."
     )
 
-    client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=60.0)
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s)
     resp = await client.chat.completions.create(
         model=model,
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a precision OCR and handwritten order reader for a French "
-                    "food wholesaler. Transcribe verbatim every product, quantity, unit, "
-                    "client note, and delivery date visible on the image (handwritten, "
-                    "cursive, or printed). Reply with the extracted text only."
-                ),
-            },
+            {"role": "system", "content": ocr_prompt},
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            f"Catalogue reference: {vocab}. "
-                            "Transcribe all text visible on this order image."
-                        ),
-                    },
+                    {"type": "text", "text": user_text},
                     {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                 ],
             },
         ],
-        temperature=0.0,
-        max_tokens=512,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        temperature=temperature,
+        max_tokens=max_tokens,
+        extra_body={"chat_template_kwargs": {"enable_thinking": enable_thinking}},
     )
     extracted = (resp.choices[0].message.content or "").strip()
     return {
@@ -117,8 +87,8 @@ async def _run_nemotron_vl(
 
 async def _run_tesseract(path: Path, cfg: Config) -> dict[str, Any]:
     t0 = time.perf_counter()
-    ocr_bin = _provider_param(cfg, "tesseract", "bin", "tesseract") or "tesseract"
-    langs = _provider_param(cfg, "tesseract", "languages", "eng+fra") or "eng+fra"
+    ocr_bin = str(cfg.provider_param("ocr", "tesseract", "bin", "tesseract"))
+    langs = str(cfg.provider_param("ocr", "tesseract", "languages", "eng+fra"))
     proc = await asyncio.create_subprocess_exec(
         ocr_bin,
         str(path),
@@ -159,26 +129,27 @@ async def extract_image_text(
     caption: str,
     product_names: list[str] | None = None,
     *,
-    cfg: Config = CONFIG,
+    cfg: Config | None = None,
 ) -> dict[str, Any]:
     """Extract text from a printed or handwritten image using the active OCR brick."""
+    active_cfg = cfg or get_config()
     clean_caption = "" if caption == "[image]" else caption.strip()
     path = Path(media_path)
     if not path.is_file():
         return {
             "text": clean_caption,
-            "provider": cfg.provider("ocr"),
+            "provider": active_cfg.provider("ocr"),
             "error": f"Image file not found: {media_path}",
         }
 
     names = product_names or []
-    primary = cfg.provider("ocr")
+    primary = active_cfg.provider("ocr")
     try:
-        res = await _dispatch_ocr(path, primary, names, cfg)
+        res = await _dispatch_ocr(path, primary, names, active_cfg)
     except Exception as exc:
-        fallback = cfg.fallback_for("ocr")
+        fallback = active_cfg.fallback_for("ocr")
         if fallback and fallback != primary:
-            res = await _dispatch_ocr(path, fallback, names, cfg)
+            res = await _dispatch_ocr(path, fallback, names, active_cfg)
             res["fallback_from"] = primary
             res["primary_error"] = str(exc)
         else:

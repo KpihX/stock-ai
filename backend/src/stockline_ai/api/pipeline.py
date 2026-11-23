@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from ..config import CONFIG
+from ..config import get_config
 from . import db, ocr, stt, whats
 from .llm import normalize
 from .schemas import ClientStats, EnrichedData, OrderLine, Product, Signal
@@ -280,7 +280,7 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
     if signal.modality == "audio":
         if signal.media_path:
             stt_res = await _transcribe_audio(signal.media_path, product_names)
-            stt_provider = str(stt_res.get("provider") or CONFIG.provider("stt"))
+            stt_provider = str(stt_res.get("provider") or get_config().provider("stt"))
             if stt_res.get("text"):
                 signal = signal.model_copy(update={"texte": str(stt_res["text"])})
             await publish(
@@ -315,7 +315,7 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
     if signal.modality == "image":
         if signal.media_path:
             ocr_res = await _extract_ocr(signal.media_path, signal.texte, product_names)
-            ocr_provider = str(ocr_res.get("provider") or CONFIG.provider("ocr"))
+            ocr_provider = str(ocr_res.get("provider") or get_config().provider("ocr"))
             if ocr_res.get("text"):
                 signal = signal.model_copy(update={"texte": str(ocr_res["text"])})
             await publish(

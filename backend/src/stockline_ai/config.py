@@ -66,6 +66,7 @@ class Config:
     overrides: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     runtime: dict[str, Any] = field(default_factory=dict)
     system_prompt: str = ""
+    ocr_prompt: str = ""
     config_path: Path = _DEFAULT_CONFIG_PATH
 
     @classmethod
@@ -78,6 +79,7 @@ class Config:
             overrides=dict(data.get("overrides") or {}),
             runtime=dict(data.get("runtime") or {}),
             system_prompt=str(data.get("system_prompt", "")),
+            ocr_prompt=str(data.get("ocr_prompt", "")),
             config_path=path or _DEFAULT_CONFIG_PATH,
         )
 
@@ -134,6 +136,36 @@ class Config:
     def fallback_for(self, brick: str) -> str:
         """Return optional fallback provider key when the primary remote brick fails."""
         return str(self.param(brick, "fallback", ""))
+
+    def provider_param(self, brick: str, provider_key: str, name: str, default: Any = "") -> Any:
+        """Resolve a parameter for a specific provider (primary or fallback)."""
+        override = (self.overrides.get(brick) or {}).get(provider_key) or {}
+        if name in override:
+            return override[name]
+        settings = self.settings.get(brick) or {}
+        if provider_key == self.provider(brick) and name in settings:
+            return settings[name]
+        if name in settings and name not in ("model", "base_url", "function_id"):
+            return settings[name]
+        spec = get_spec(brick, provider_key)
+        fallback = getattr(spec, name, None)
+        if fallback not in (None, ""):
+            return fallback
+        return default
+
+    def provider_api_key(self, brick: str, provider_key: str, *, required: bool = False) -> str:
+        """Resolve the API key for a specific provider key."""
+        spec = get_spec(brick, provider_key)
+        for name in spec.api_key_env:
+            value = get_secret(name)
+            if value:
+                return value
+        if required and spec.api_key_env:
+            names = ", ".join(spec.api_key_env)
+            raise SecretsUnavailableError(
+                f"Missing API key for '{brick}:{provider_key}'. Expected one of: {names}"
+            )
+        return ""
 
     def path_for(self, name: str, default: str) -> Path:
         """Resolve a runtime path, expanding ~ without hardcoding a home directory."""
@@ -198,6 +230,23 @@ class Config:
 
 
 CONFIG = Config.from_file()
+_CACHE_MTIME_NS: int = (
+    _DEFAULT_CONFIG_PATH.stat().st_mtime_ns if _DEFAULT_CONFIG_PATH.is_file() else 0
+)
+
+
+def get_config(path: Path | None = None) -> Config:
+    """Return the latest Config, hot-reloading automatically when config.jsonc changes on disk."""
+    global CONFIG, _CACHE_MTIME_NS
+    target = path or CONFIG.config_path or _DEFAULT_CONFIG_PATH
+    try:
+        mtime_ns = target.stat().st_mtime_ns
+    except OSError:
+        return CONFIG
+    if target != CONFIG.config_path or mtime_ns != _CACHE_MTIME_NS:
+        CONFIG = Config.from_file(target)
+        _CACHE_MTIME_NS = mtime_ns
+    return CONFIG
 
 
 def validate_startup() -> None:
