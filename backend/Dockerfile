@@ -1,9 +1,11 @@
-FROM node:22-alpine AS wa-builder
-RUN apk add --no-cache git
+FROM node:22-bookworm-slim AS wa-builder
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git python3 make g++ ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /wa
 COPY wa/package.json wa/tsconfig.json ./
 COPY wa/src ./src
-RUN npm install --ignore-scripts && npx tsc --noEmit
+RUN npm install && npx tsc --noEmit
 
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim AS py-builder
 WORKDIR /app

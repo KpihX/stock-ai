@@ -1,8 +1,10 @@
 import type {
+  CallConfig,
   ClientAccount,
   ClientDetail,
   ClientStats,
   Command,
+  IncomingCallState,
   ManagerAccount,
   Paginated,
   PipelineLogItem,
@@ -254,6 +256,72 @@ export const api = {
   me: () => request<{ username: string; role?: string }>("/api/auth/me"),
 
   createCall: () => request<{ call_id: string }>("/api/calls", { method: "POST" }),
+
+  getCallConfig: () => request<CallConfig>("/api/calls/config"),
+
+  getActiveCalls: () =>
+    request<{ items: IncomingCallState[]; recent: IncomingCallState[] }>(
+      "/api/calls/active",
+    ),
+
+  acceptCall: (callId: string, sdpOffer: string) =>
+    request<{
+      call_id: string;
+      status: string;
+      sdp_answer: string;
+      mode: string;
+    }>(`/api/calls/${encodeURIComponent(callId)}/accept`, {
+      method: "POST",
+      body: JSON.stringify({ sdp_offer: sdpOffer }),
+    }),
+
+  rejectCall: (callId: string, reason = "declined") =>
+    request<{ call_id: string; status: string }>(
+      `/api/calls/${encodeURIComponent(callId)}/reject`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
+
+  hangupCall: (callId: string, reason = "completed") =>
+    request<{ call_id: string; status: string }>(
+      `/api/calls/${encodeURIComponent(callId)}/hangup`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      },
+    ),
+
+  muteCall: (callId: string, muted: boolean) =>
+    request<{ call_id: string; muted: boolean }>(
+      `/api/calls/${encodeURIComponent(callId)}/mute`,
+      {
+        method: "POST",
+        body: JSON.stringify({ muted }),
+      },
+    ),
+
+  commitCall: (callId: string) =>
+    request<{ status: string; call_id: string; result?: unknown }>(
+      `/api/calls/${encodeURIComponent(callId)}/commit`,
+      { method: "POST" },
+    ),
+
+  simulateCall: (phone: string, text: string) =>
+    request<IncomingCallState & { call_id: string }>("/api/calls/simulate", {
+      method: "POST",
+      body: JSON.stringify({ phone, text }),
+    }),
+
+  injectCallText: (callId: string, text: string) =>
+    request<{ call_id: string; samples: number }>(
+      `/api/calls/${encodeURIComponent(callId)}/inject-text`,
+      {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      },
+    ),
 };
 
 export type { Paginated };

@@ -112,6 +112,35 @@ export interface ClientStats {
   total_spent: number;
 }
 
+export interface CallTranscriptEntry {
+  id: string;
+  speaker: "client" | "system" | "assistant";
+  text: string;
+  duration_ms?: number;
+  ts: string;
+}
+
+export interface IncomingCallState {
+  call_id: string;
+  phone_number: string;
+  client_id: string;
+  client_name: string;
+  known_client: boolean;
+  status: "ringing" | "active" | "ended" | "rejected";
+  mode: string;
+  started_at: string;
+  muted: boolean;
+  committed: boolean;
+  transcripts: CallTranscriptEntry[];
+}
+
+export interface CallConfig {
+  provider: string;
+  sample_rate: number;
+  webrtc_rate: number;
+  ice_servers: RTCIceServer[];
+}
+
 export interface Paginated<T> {
   items: T[];
   total?: number;

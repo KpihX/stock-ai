@@ -14,20 +14,99 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import makeWASocket, {
+import {
   type AnyMessageContent,
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  makeWASocket,
   useMultiFileAuthState,
-} from '@whiskeysockets/baileys'
+} from '@innovatorssoft/baileys'
 import { Boom } from '@hapi/boom'
 import QRCode from 'qrcode'
+import { VoipBridgeManager } from './voip.js'
+import type { BridgeConfig } from './webrtc-bridge.js'
 
 const API_URL = process.env.STOCKLINE_API_URL || 'http://api:8000'
 const STATE_DIR = process.env.WHATS_PROXY_STATE_DIR || '/app/wa-state'
 const PORT = Number(process.env.WA_PORT || 3001)
 const PHONE = process.env.STOCKLINE_PHONE || ''
+
+function stripJsonComments(raw: string): string {
+  let out = ''
+  let inStr = false
+  let esc = false
+  let i = 0
+  while (i < raw.length) {
+    const ch = raw[i]
+    const next = raw[i + 1]
+    if (inStr) {
+      out += ch
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+      i += 1
+      continue
+    }
+    if (ch === '"') {
+      inStr = true
+      out += ch
+      i += 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      while (i < raw.length && raw[i] !== '\n') i += 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      i += 2
+      while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) i += 1
+      i += 2
+      continue
+    }
+    out += ch
+    i += 1
+  }
+  return out
+}
+
+function loadCallsConfig(): {
+  bridgeConfig: BridgeConfig
+  maxConcurrentCalls: number
+  pthreadPoolSize: number
+} {
+  const candidates = ['/app/config.jsonc', join(process.cwd(), '../config.jsonc')]
+  let calls: Record<string, any> = {}
+  for (const path of candidates) {
+    if (existsSync(path)) {
+      try {
+        const parsed = JSON.parse(stripJsonComments(readFileSync(path, 'utf8')))
+        calls = parsed?.settings?.calls || {}
+        break
+      } catch (err) {
+        console.warn('[wa] failed to parse config.jsonc', err)
+      }
+    }
+  }
+  return {
+    maxConcurrentCalls: Number(calls.max_concurrent_calls ?? 1),
+    pthreadPoolSize: Number(calls.pthread_pool_size ?? 4),
+    bridgeConfig: {
+      sampleRate: Number(calls.sample_rate ?? 16000),
+      webrtcRate: Number(calls.webrtc_rate ?? 48000),
+      channels: Number(calls.channels ?? 1),
+      framesPerChunk: Number(calls.frames_per_chunk ?? 320),
+      vadRmsThreshold: Number(calls.vad_rms_threshold ?? 0.012),
+      vadSilenceMs: Number(calls.vad_silence_ms ?? 1100),
+      vadMaxUtteranceMs: Number(calls.vad_max_utterance_ms ?? 12000),
+      icePortMin: Number(calls.ice_port_min ?? 40000),
+      icePortMax: Number(calls.ice_port_max ?? 40020),
+      iceServers: Array.isArray(calls.ice_servers)
+        ? calls.ice_servers.map(String)
+        : ['stun:stun.l.google.com:19302'],
+    },
+  }
+}
 
 interface Signal {
   evenement_id: string
@@ -56,15 +135,8 @@ function canonicalPhone(value: string): string {
   return userPart.replace(/[^0-9]/g, '')
 }
 
-function resolveSenderPhone(key: any): string {
-  const alt = key?.remoteJidAlt || key?.senderPn || ''
-  if (typeof alt === 'string' && alt.endsWith('@s.whatsapp.net')) {
-    return canonicalPhone(alt)
-  }
-  const jid = String(key?.remoteJid || '')
-  if (jid.endsWith('@s.whatsapp.net')) {
-    return canonicalPhone(jid)
-  }
+function resolvePhoneFromJid(jid: string): string {
+  if (!jid) return ''
   if (jid.endsWith('@lid')) {
     const lid = canonicalPhone(jid)
     const reverseFile = join(STATE_DIR, `lid-mapping-${lid}_reverse.json`)
@@ -82,6 +154,23 @@ function resolveSenderPhone(key: any): string {
   }
   return canonicalPhone(jid)
 }
+
+function resolveSenderPhone(key: any): string {
+  const alt = key?.remoteJidAlt || key?.senderPn || ''
+  if (typeof alt === 'string' && alt.endsWith('@s.whatsapp.net')) {
+    return canonicalPhone(alt)
+  }
+  return resolvePhoneFromJid(String(key?.remoteJid || ''))
+}
+
+const callsCfg = loadCallsConfig()
+const voipManager = new VoipBridgeManager({
+  apiUrl: API_URL,
+  bridgeConfig: callsCfg.bridgeConfig,
+  maxConcurrentCalls: callsCfg.maxConcurrentCalls,
+  pthreadPoolSize: callsCfg.pthreadPoolSize,
+  resolvePhone: resolvePhoneFromJid,
+})
 
 function unwrapMessage(raw: any): any {
   if (!raw) return raw
@@ -125,14 +214,16 @@ async function connect(): Promise<void> {
   const { state, saveCreds } = await useMultiFileAuthState(STATE_DIR)
   const { version } = await fetchLatestBaileysVersion()
 
-  sock = makeWASocket({
+  const createWASocket = ((makeWASocket as any)?.default ?? makeWASocket) as typeof makeWASocket
+  const activeSock = createWASocket({
     version,
     auth: state,
     browser: ['Stockline', 'Chrome', '1.0.0'],
   })
-  sock.ev.on('creds.update', saveCreds)
+  sock = activeSock
+  activeSock.ev.on('creds.update', saveCreds)
 
-  sock.ev.on('connection.update', (update: any) => {
+  activeSock.ev.on('connection.update', (update: any) => {
     const { connection, lastDisconnect, qr } = update
     if (qr) {
       status = 'qr_pending'
@@ -152,11 +243,12 @@ async function connect(): Promise<void> {
     if (connection === 'open') {
       status = 'connected'
       currentQr = null
-      console.log(`[wa] connected as ${sock?.user?.id || '?'}`)
+      console.log(`[wa] connected as ${activeSock.user?.id || '?'}`)
+      void voipManager.attachSocket(activeSock)
     }
   })
 
-  sock.ev.on('messages.upsert', async ({ messages, type }: any) => {
+  activeSock.ev.on('messages.upsert', async ({ messages, type }: any) => {
     if (type !== 'notify') return
     for (const message of messages) {
       if (!message.message || message.key.fromMe) continue
@@ -279,6 +371,83 @@ const server = createServer(async (request, response) => {
     } catch (error) {
       console.error('[wa] /send failed', error)
       sendJson(response, 502, { error: String(error) })
+    }
+    return
+  }
+  if (request.method === 'GET' && request.url === '/calls') {
+    sendJson(response, 200, { items: voipManager.listCalls() })
+    return
+  }
+  if (request.method === 'POST' && request.url === '/call/accept') {
+    try {
+      const body = JSON.parse(await readBody(request)) as { call_id: string; sdp_offer: string }
+      const result = await voipManager.acceptCall(String(body.call_id || ''), String(body.sdp_offer || ''))
+      sendJson(response, 200, result)
+    } catch (error) {
+      console.error('[wa] /call/accept failed', error)
+      sendJson(response, 400, { error: String(error) })
+    }
+    return
+  }
+  if (request.method === 'POST' && request.url === '/call/reject') {
+    try {
+      const body = JSON.parse(await readBody(request)) as { call_id: string; reason?: string }
+      const result = await voipManager.rejectCall(String(body.call_id || ''), body.reason || 'declined')
+      sendJson(response, 200, result)
+    } catch (error) {
+      sendJson(response, 400, { error: String(error) })
+    }
+    return
+  }
+  if (request.method === 'POST' && request.url === '/call/hangup') {
+    try {
+      const body = JSON.parse(await readBody(request)) as { call_id: string; reason?: string }
+      const result = await voipManager.hangupCall(String(body.call_id || ''), body.reason || 'completed')
+      sendJson(response, 200, result)
+    } catch (error) {
+      sendJson(response, 400, { error: String(error) })
+    }
+    return
+  }
+  if (request.method === 'POST' && request.url === '/call/mute') {
+    try {
+      const body = JSON.parse(await readBody(request)) as { call_id: string; muted: boolean }
+      const result = voipManager.setMuted(String(body.call_id || ''), Boolean(body.muted))
+      sendJson(response, 200, result)
+    } catch (error) {
+      sendJson(response, 400, { error: String(error) })
+    }
+    return
+  }
+  if (request.method === 'POST' && request.url === '/call/simulate') {
+    try {
+      const body = JSON.parse(await readBody(request)) as {
+        from: string
+        wav_base64?: string
+        call_id?: string
+      }
+      const result = await voipManager.simulateIncomingCall({
+        from: String(body.from || ''),
+        wavBase64: body.wav_base64,
+        callId: body.call_id,
+      })
+      sendJson(response, 200, result)
+    } catch (error) {
+      console.error('[wa] /call/simulate failed', error)
+      sendJson(response, 400, { error: String(error) })
+    }
+    return
+  }
+  if (request.method === 'POST' && request.url === '/call/inject-audio') {
+    try {
+      const body = JSON.parse(await readBody(request)) as { call_id: string; wav_base64: string }
+      const result = voipManager.injectCallerAudio(
+        String(body.call_id || ''),
+        String(body.wav_base64 || '')
+      )
+      sendJson(response, 200, result)
+    } catch (error) {
+      sendJson(response, 400, { error: String(error) })
     }
     return
   }

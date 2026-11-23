@@ -26,6 +26,7 @@ load_dotenv(_ROOT_DIR / ".env", override=False)
 
 DEFAULT_SELECTION: dict[str, str] = {
     "messaging": "baileys",
+    "calls": "baileys_voip",
     "stt": "whisper",
     "ocr": "tesseract",
     "tts": "edge_tts",
@@ -138,6 +139,10 @@ class Config:
     def whats_proxy_state_dir(self) -> Path:
         settings = self.settings.get("messaging") or {}
         return Path(str(settings.get("state_dir", "~/.local/share/whats-proxy"))).expanduser()
+
+    @property
+    def calls_settings(self) -> dict[str, Any]:
+        return dict(self.settings.get("calls") or {})
 
     @property
     def stt_models_dir(self) -> Path:

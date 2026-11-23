@@ -198,31 +198,10 @@ def _digits(value: str) -> str:
     return "".join(ch for ch in head if ch.isdigit())
 
 
-async def _transcribe_audio(media_path: str, product_names: list[str]) -> dict[str, Any]:
-    path = Path(media_path)
-    if not path.is_file():
-        return {"text": "", "error": f"Audio file not found: {media_path}"}
-    wav_path = path.with_suffix(".wav")
-    ff = await asyncio.create_subprocess_exec(
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(path),
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        str(wav_path),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, ff_err = await ff.communicate()
-    if ff.returncode != 0 or not wav_path.is_file():
-        return {
-            "text": "",
-            "error": f"ffmpeg failed ({ff.returncode}): {ff_err.decode(errors='ignore')[:300]}",
-        }
-
+async def transcribe_wav_file(wav_path: Path, product_names: list[str]) -> dict[str, Any]:
+    """Run whisper-cli directly on a 16 kHz mono WAV file using the catalogue prompt."""
+    if not wav_path.is_file():
+        return {"text": "", "error": f"WAV file not found: {wav_path}"}
     whisper_bin = CONFIG.bin_for("stt") or "whisper-cli"
     model_path = CONFIG.stt_models_dir / CONFIG.model_for("stt")
     vocab = (
@@ -258,6 +237,33 @@ async def _transcribe_audio(media_path: str, product_names: list[str]) -> dict[s
         "returncode": proc.returncode,
         "stderr": err.decode(errors="ignore")[:300],
     }
+
+
+async def _transcribe_audio(media_path: str, product_names: list[str]) -> dict[str, Any]:
+    path = Path(media_path)
+    if not path.is_file():
+        return {"text": "", "error": f"Audio file not found: {media_path}"}
+    wav_path = path.with_suffix(".wav")
+    ff = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(path),
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        str(wav_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, ff_err = await ff.communicate()
+    if ff.returncode != 0 or not wav_path.is_file():
+        return {
+            "text": "",
+            "error": f"ffmpeg failed ({ff.returncode}): {ff_err.decode(errors='ignore')[:300]}",
+        }
+    return await transcribe_wav_file(wav_path, product_names)
 
 
 async def _extract_ocr(media_path: str, caption: str) -> dict[str, Any]:

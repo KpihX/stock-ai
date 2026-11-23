@@ -3,6 +3,7 @@
   // Valid ids are listed in src/stockline_ai/providers.py.
   "selection": {
     "messaging": "baileys",
+    "calls": "baileys_voip",
     "stt": "whisper",
     "ocr": "tesseract",
     "tts": "edge_tts",
@@ -16,6 +17,22 @@
     "messaging": {
       "bin": "whats-proxy",
       "state_dir": "~/.local/share/whats-proxy"
+    },
+    "calls": {
+      "wa_url": "http://localhost:3001",
+      "max_concurrent_calls": 1,
+      "pthread_pool_size": 4,
+      "answer_source": "silence",
+      "sample_rate": 16000,
+      "webrtc_rate": 48000,
+      "channels": 1,
+      "frames_per_chunk": 320,
+      "vad_rms_threshold": 0.012,
+      "vad_silence_ms": 1100,
+      "vad_max_utterance_ms": 12000,
+      "ice_port_min": 40000,
+      "ice_port_max": 40020,
+      "ice_servers": ["stun:stun.l.google.com:19302"]
     },
     "stt": {
       "bin": "whisper-cli",

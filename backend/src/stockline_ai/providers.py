@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-BRICKS: tuple[str, ...] = ("messaging", "stt", "ocr", "tts", "agent_llm")
+BRICKS: tuple[str, ...] = ("messaging", "calls", "stt", "ocr", "tts", "agent_llm")
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,21 @@ MESSAGING: dict[str, ProviderSpec] = {
     "baileys": ProviderSpec(
         key="baileys",
         label="Baileys through the installed whats-proxy daemon",
+    ),
+}
+
+CALLS: dict[str, ProviderSpec] = {
+    "baileys_voip": ProviderSpec(
+        key="baileys_voip",
+        label="WhatsApp Web VoIP via @innovatorssoft/baileys bridged to browser WebRTC Opus",
+    ),
+    "meta_calling": ProviderSpec(
+        key="meta_calling",
+        label="Official Meta WhatsApp Business Calling API (WebRTC Opus 48 kHz)",
+    ),
+    "browser_webrtc": ProviderSpec(
+        key="browser_webrtc",
+        label="Browser microphone fallback over WebSocket",
     ),
 }
 
@@ -72,6 +87,7 @@ AGENT_LLM: dict[str, ProviderSpec] = {
 
 REGISTRIES: dict[str, dict[str, ProviderSpec]] = {
     "messaging": MESSAGING,
+    "calls": CALLS,
     "stt": STT,
     "ocr": OCR,
     "tts": TTS,

@@ -9,9 +9,11 @@ import {
 } from "react";
 import { api, clearToken, getToken, streamUrl } from "./api";
 import type {
+  CallConfig,
   ClientAccount,
   ClientDetail,
   Command,
+  IncomingCallState,
   ManagerAccount,
   PipelineLogItem,
   Product,
@@ -488,6 +490,16 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   const [flashCommandId, setFlashCommandId] = useState<string | null>(null);
   const knownSigRef = useRef<string>("");
 
+  const [activeCall, setActiveCall] = useState<IncomingCallState | null>(null);
+  const [recentCalls, setRecentCalls] = useState<IncomingCallState[]>([]);
+  const [webrtcState, setWebrtcState] = useState<string>("idle");
+  const [callBusy, setCallBusy] = useState(false);
+  const callConfigRef = useRef<CallConfig | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const silentCtxRef = useRef<AudioContext | null>(null);
+
   const dragRef = useRef<{
     mode: "node" | "pan";
     nodeId?: string;
@@ -551,16 +563,23 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       const userRole = me.role === "admin" ? "admin" : "manager";
       setUsername(me.username);
       setRole(userRole);
-      const [cmds, prods, clis, pipe] = await Promise.all([
+      const [cmds, prods, clis, pipe, callState, callCfg] = await Promise.all([
         api.getCommands(),
         api.getProducts(),
         api.getClients(),
         api.getPipelineLogs(120),
+        api.getActiveCalls().catch(() => ({ items: [], recent: [] })),
+        api.getCallConfig().catch(() => null),
       ]);
       setCommands(cmds);
       setProducts(prods);
       setClients(clis);
       setLogs(pipe);
+      if (callCfg) callConfigRef.current = callCfg;
+      setRecentCalls(callState.recent || []);
+      if (callState.items?.length) {
+        setActiveCall((curr) => curr || callState.items[0]);
+      }
       knownSigRef.current = cmds
         .map((c) => `${c.command_id}:${c.status}:${c.quantity}:${c.summary}`)
         .join("|");
@@ -616,6 +635,75 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         );
         if (item.node_id) {
           setSelectedNodeId(item.node_id);
+        }
+        if (item.event_type === "call.incoming") {
+          const incoming: IncomingCallState = {
+            call_id: String(event.call_id || ""),
+            phone_number: String(event.phone_number || ""),
+            client_id: String(event.client_id || ""),
+            client_name: String(event.client_name || event.phone_number || "Caller"),
+            known_client: Boolean(event.known_client),
+            status: "ringing",
+            mode: String(event.mode || "baileys_voip"),
+            started_at: item.created_at,
+            muted: false,
+            committed: false,
+            transcripts: [],
+          };
+          setActiveCall(incoming);
+          setWebrtcState("ringing");
+          showToast(`Incoming WhatsApp call from ${incoming.client_name}`);
+        }
+        if (item.event_type === "call.state") {
+          const cid = String(event.call_id || "");
+          const st = String(event.status || "active") as IncomingCallState["status"];
+          setActiveCall((curr) =>
+            curr && curr.call_id === cid ? { ...curr, status: st } : curr,
+          );
+        }
+        if (item.event_type === "call.transcript") {
+          const cid = String(event.call_id || "");
+          const txt = String(event.text || "").trim();
+          if (txt) {
+            setActiveCall((curr) =>
+              curr && curr.call_id === cid
+                ? {
+                    ...curr,
+                    transcripts: [
+                      ...curr.transcripts,
+                      {
+                        id: String(item.log_id),
+                        speaker: "client",
+                        text: txt,
+                        duration_ms: Number(event.duration_ms || 0),
+                        ts: item.created_at,
+                      },
+                    ],
+                  }
+                : curr,
+            );
+          }
+        }
+        if (item.event_type === "call.ended") {
+          const cid = String(event.call_id || "");
+          setActiveCall((curr) => (curr && curr.call_id === cid ? null : curr));
+          void api
+            .getActiveCalls()
+            .then((res) => setRecentCalls(res.recent || []))
+            .catch(() => {});
+          if (pcRef.current) {
+            try {
+              pcRef.current.close();
+            } catch {}
+            pcRef.current = null;
+          }
+          localStreamRef.current?.getTracks().forEach((t) => t.stop());
+          localStreamRef.current = null;
+          if (silentCtxRef.current) {
+            void silentCtxRef.current.close().catch(() => {});
+            silentCtxRef.current = null;
+          }
+          setWebrtcState("idle");
         }
         if (item.event_type === "signal.received") {
           setTopBanner({
@@ -691,11 +779,31 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   useEffect(() => {
     const t = setInterval(async () => {
       try {
-        const [cmds, pipe] = await Promise.all([
+        const [cmds, pipe, callState] = await Promise.all([
           api.getCommands(),
           api.getPipelineLogs(120),
+          api.getActiveCalls().catch(() => null),
         ]);
         setLogs(pipe);
+        if (callState) {
+          setRecentCalls(callState.recent || []);
+          const liveCall = callState.items?.[0] || null;
+          setActiveCall((curr) => {
+            if (!liveCall) {
+              return curr && (curr.status === "ringing" || curr.status === "active")
+                ? null
+                : curr;
+            }
+            if (!curr || curr.call_id !== liveCall.call_id) return liveCall;
+            return {
+              ...liveCall,
+              transcripts:
+                liveCall.transcripts.length >= curr.transcripts.length
+                  ? liveCall.transcripts
+                  : curr.transcripts,
+            };
+          });
+        }
         const newSig = cmds
           .map((c) => `${c.command_id}:${c.status}:${c.quantity}:${c.summary}`)
           .join("|");
@@ -752,6 +860,211 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     const t = setInterval(() => void refreshWa("admin"), 6000);
     return () => clearInterval(t);
   }, [role, refreshWa]);
+
+  const closeWebRtcPeer = useCallback(() => {
+    if (pcRef.current) {
+      try {
+        pcRef.current.close();
+      } catch {}
+      pcRef.current = null;
+    }
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+    if (silentCtxRef.current) {
+      void silentCtxRef.current.close().catch(() => {});
+      silentCtxRef.current = null;
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
+    setWebrtcState("idle");
+  }, []);
+
+  useEffect(() => {
+    return () => closeWebRtcPeer();
+  }, [closeWebRtcPeer]);
+
+  const answerCall = useCallback(
+    async (callId: string) => {
+      setCallBusy(true);
+      try {
+        closeWebRtcPeer();
+        setWebrtcState("connecting");
+
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1,
+              sampleRate: { ideal: 48000 },
+            },
+            video: false,
+          });
+        } catch {
+          // Graceful fallback when running on a machine without mic hardware
+          const ctx = new AudioContext();
+          silentCtxRef.current = ctx;
+          const dst = ctx.createMediaStreamDestination();
+          stream = dst.stream;
+        }
+        localStreamRef.current = stream;
+
+        const iceServers = callConfigRef.current?.ice_servers?.length
+          ? callConfigRef.current.ice_servers
+          : [{ urls: "stun:stun.l.google.com:19302" }];
+
+        const pc = new RTCPeerConnection({ iceServers });
+        pcRef.current = pc;
+
+        for (const track of stream.getTracks()) {
+          pc.addTrack(track, stream);
+        }
+
+        pc.ontrack = (ev) => {
+          const remoteStream = new MediaStream([ev.track]);
+          if (remoteAudioRef.current) {
+            remoteAudioRef.current.srcObject = remoteStream;
+            void remoteAudioRef.current.play().catch(() => {});
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          setWebrtcState(pc.connectionState || "connecting");
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        await new Promise<void>((resolve) => {
+          if (pc.iceGatheringState === "complete") {
+            resolve();
+            return;
+          }
+          const timer = setTimeout(resolve, 2500);
+          const onChange = () => {
+            if (pc.iceGatheringState === "complete") {
+              clearTimeout(timer);
+              pc.removeEventListener("icegatheringstatechange", onChange);
+              resolve();
+            }
+          };
+          pc.addEventListener("icegatheringstatechange", onChange);
+        });
+
+        const sdpOffer = pc.localDescription?.sdp || offer.sdp || "";
+        const res = await api.acceptCall(callId, sdpOffer);
+        await pc.setRemoteDescription({ type: "answer", sdp: res.sdp_answer });
+        setActiveCall((curr) =>
+          curr && curr.call_id === callId ? { ...curr, status: "active" } : curr,
+        );
+        setPage("call");
+        showToast("WebRTC Opus call connected");
+      } catch (err) {
+        closeWebRtcPeer();
+        showToast(
+          err instanceof Error ? err.message : "Failed to answer call",
+          true,
+        );
+      } finally {
+        setCallBusy(false);
+      }
+    },
+    [closeWebRtcPeer, showToast],
+  );
+
+  const rejectCall = useCallback(
+    async (callId: string) => {
+      setCallBusy(true);
+      try {
+        await api.rejectCall(callId);
+        closeWebRtcPeer();
+        setActiveCall(null);
+        showToast("Call rejected");
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Failed to reject call",
+          true,
+        );
+      } finally {
+        setCallBusy(false);
+      }
+    },
+    [closeWebRtcPeer, showToast],
+  );
+
+  const hangupCall = useCallback(
+    async (callId: string) => {
+      setCallBusy(true);
+      try {
+        await api.hangupCall(callId);
+        closeWebRtcPeer();
+        setActiveCall(null);
+        showToast("Call ended");
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Failed to hang up",
+          true,
+        );
+      } finally {
+        setCallBusy(false);
+      }
+    },
+    [closeWebRtcPeer, showToast],
+  );
+
+  const toggleCallMute = useCallback(
+    async (callId: string, muted: boolean) => {
+      localStreamRef.current?.getAudioTracks().forEach((t) => {
+        t.enabled = !muted;
+      });
+      setActiveCall((curr) =>
+        curr && curr.call_id === callId ? { ...curr, muted } : curr,
+      );
+      try {
+        await api.muteCall(callId, muted);
+      } catch {
+        // local track already muted
+      }
+    },
+    [],
+  );
+
+  const commitCallOrder = useCallback(
+    async (callId: string) => {
+      try {
+        await api.commitCall(callId);
+        setActiveCall((curr) =>
+          curr && curr.call_id === callId ? { ...curr, committed: true } : curr,
+        );
+        showToast("Order extraction triggered from live call transcript");
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "Order extraction failed",
+          true,
+        );
+      }
+    },
+    [showToast],
+  );
+
+  const simulateIncomingCall = useCallback(
+    async (phone: string, text: string) => {
+      const res = await api.simulateCall(phone, text);
+      showToast(`Simulated WhatsApp call ${res.call_id} ringing`);
+    },
+    [showToast],
+  );
+
+  const injectCallText = useCallback(
+    async (callId: string, text: string) => {
+      await api.injectCallText(callId, text);
+      showToast("Injected spoken phrase into active WebRTC call");
+    },
+    [showToast],
+  );
 
   const openClientProfile = useCallback(
     async (clientId: string) => {
@@ -2112,7 +2425,20 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
         {page === "call" && (
           <section className="panel">
-            <CallPanel />
+            <CallPanel
+              activeCall={activeCall}
+              recentCalls={recentCalls}
+              webrtcState={webrtcState}
+              callBusy={callBusy}
+              clients={clients}
+              onAnswer={(cid) => void answerCall(cid)}
+              onReject={(cid) => void rejectCall(cid)}
+              onHangup={(cid) => void hangupCall(cid)}
+              onToggleMute={(cid, m) => void toggleCallMute(cid, m)}
+              onCommitOrder={(cid) => void commitCallOrder(cid)}
+              onSimulateCall={simulateIncomingCall}
+              onInjectText={injectCallText}
+            />
           </section>
         )}
 
@@ -2360,6 +2686,83 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           </section>
         )}
       </main>
+
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
+
+      {activeCall && (
+        <div
+          className={`incoming-call-banner ${activeCall.status === "ringing" ? "ringing" : "active"}`}
+          role="region"
+          aria-live="assertive"
+        >
+          <div className="top-banner-left">
+            <span className="call-pulse-dot" />
+            <div className="top-banner-content">
+              <div className="top-banner-head">
+                <span className={`pill ${activeCall.status === "ringing" ? "warn" : "ok"}`}>
+                  {activeCall.status === "ringing" ? "Incoming WhatsApp Call" : `Live Call · ${webrtcState}`}
+                </span>
+                <strong className="top-banner-title">
+                  {activeCall.client_name} · {activeCall.phone_number}
+                </strong>
+              </div>
+              <div className="top-banner-desc">
+                {activeCall.transcripts.length > 0
+                  ? `"${activeCall.transcripts[activeCall.transcripts.length - 1].text}"`
+                  : activeCall.status === "ringing"
+                    ? "Customer is calling the paired Stockline WhatsApp line. Answer in browser via WebRTC Opus."
+                    : "Bidirectional WebRTC Opus (48 kHz) active — Whisper is listening."}
+              </div>
+            </div>
+          </div>
+          <div className="top-banner-actions">
+            {activeCall.status === "ringing" ? (
+              <>
+                <button
+                  className="btn small primary"
+                  type="button"
+                  disabled={callBusy}
+                  onClick={() => void answerCall(activeCall.call_id)}
+                >
+                  {callBusy ? "Connecting..." : "Answer"}
+                </button>
+                <button
+                  className="btn small reject"
+                  type="button"
+                  disabled={callBusy}
+                  onClick={() => void rejectCall(activeCall.call_id)}
+                >
+                  Reject
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className="btn small ghost"
+                  type="button"
+                  onClick={() => setPage("call")}
+                >
+                  Open Call Desk
+                </button>
+                <button
+                  className="btn small ghost"
+                  type="button"
+                  onClick={() => void toggleCallMute(activeCall.call_id, !activeCall.muted)}
+                >
+                  {activeCall.muted ? "Unmute" : "Mute"}
+                </button>
+                <button
+                  className="btn small reject"
+                  type="button"
+                  onClick={() => void hangupCall(activeCall.call_id)}
+                >
+                  Hang up
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {topBanner && (
         <div

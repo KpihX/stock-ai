@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from ..config import CONFIG, validate_startup
-from . import admin, db, whats
+from . import admin, calls, db, whats
 from .auth import check_credentials, create_token, get_claims, verify_token
 from .events import BUS
 from .pipeline import handle_signal, publish, set_event_bus
@@ -49,6 +49,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(admin.router)
+app.include_router(calls.router)
 
 
 def run() -> None:
@@ -104,6 +105,11 @@ async def commands(
 ) -> dict[str, Any]:
     rows = await db.fetch_commands(limit, offset)
     return {"items": [Command(**r).model_dump(mode="json") for r in rows], "total": len(rows)}
+
+
+@app.get("/api/commands/stream")
+async def command_stream(_: str = Depends(verify_token)) -> EventSourceResponse:
+    return EventSourceResponse(BUS.stream())
 
 
 @app.get("/api/commands/{command_id}", response_model=CommandDetail)
@@ -211,11 +217,6 @@ async def approve_command(
         "wa_error": wa_error,
         "new_stock": new_stock,
     }
-
-
-@app.get("/api/commands/stream")
-async def command_stream(_: str = Depends(verify_token)) -> EventSourceResponse:
-    return EventSourceResponse(BUS.stream())
 
 
 @app.get("/api/clients/{client_id}/stats")
