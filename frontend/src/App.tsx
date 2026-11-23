@@ -933,7 +933,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
 
         let stream: MediaStream;
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
+          const micPromise = navigator.mediaDevices.getUserMedia({
             audio: {
               echoCancellation: true,
               noiseSuppression: true,
@@ -943,8 +943,12 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             },
             video: false,
           });
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Microphone prompt timed out")), 4500),
+          );
+          stream = await Promise.race([micPromise, timeoutPromise]);
         } catch {
-          // Graceful fallback when running on a machine without mic hardware
+          // Graceful fallback when mic is missing or permission prompt is dismissed/timed out
           const ctx = new AudioContext();
           silentCtxRef.current = ctx;
           const dst = ctx.createMediaStreamDestination();
@@ -1416,9 +1420,11 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         ? "Waiting scan"
         : wa.status === "connecting"
           ? "Connecting..."
-          : wa.status === "disconnected"
-            ? "Disconnected"
-            : "WA Offline";
+          : wa.status === "checking"
+            ? "Checking..."
+            : wa.status === "disconnected"
+              ? "Disconnected"
+              : "WA Offline";
 
   const pageMeta: Record<PageId, [string, string]> = {
     dashboard: [
@@ -1711,7 +1717,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             {role === "admin" && (
               <button
                 type="button"
-                className={`pill status-link ${wa.status === "connected" ? "ok" : wa.status === "qr_pending" || wa.status === "connecting" ? "warn" : "bad"}`}
+                className={`pill status-link ${wa.status === "connected" ? "ok" : wa.status === "qr_pending" || wa.status === "connecting" || wa.status === "checking" ? "warn" : "bad"}`}
                 onClick={() => setPage("settings")}
               >
                 <span className="dot" />
