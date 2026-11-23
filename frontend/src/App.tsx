@@ -477,6 +477,16 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
   const [toastMsg, setToastMsg] = useState<{ text: string; bad: boolean } | null>(
     null,
   );
+  const [topBanner, setTopBanner] = useState<{
+    id: string;
+    badge: string;
+    tone: "warn" | "ok" | "bad";
+    title: string;
+    description: string;
+    commandId?: string;
+  } | null>(null);
+  const [flashCommandId, setFlashCommandId] = useState<string | null>(null);
+  const knownSigRef = useRef<string>("");
 
   const dragRef = useRef<{
     mode: "node" | "pan";
@@ -497,6 +507,18 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
     const t = setTimeout(() => setToastMsg(null), 3600);
     return () => clearTimeout(t);
   }, [toastMsg]);
+
+  useEffect(() => {
+    if (!topBanner) return;
+    const t = setTimeout(() => setTopBanner(null), 9000);
+    return () => clearTimeout(t);
+  }, [topBanner]);
+
+  useEffect(() => {
+    if (!flashCommandId) return;
+    const t = setTimeout(() => setFlashCommandId(null), 3000);
+    return () => clearTimeout(t);
+  }, [flashCommandId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -539,6 +561,9 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       setProducts(prods);
       setClients(clis);
       setLogs(pipe);
+      knownSigRef.current = cmds
+        .map((c) => `${c.command_id}:${c.status}:${c.quantity}:${c.summary}`)
+        .join("|");
       if (userRole === "admin") {
         const [mgrs] = await Promise.all([
           api.getManagers(),
@@ -567,6 +592,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       setSseState("open");
       try {
         const event = JSON.parse(ev.data) as Record<string, unknown>;
+        if (event.type === "stream.connected") {
+          setSseState("open");
+          return;
+        }
         const item: PipelineLogItem = {
           log_id: Number(event.log_id || Date.now()),
           created_at: String(
@@ -588,6 +617,15 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         if (item.node_id) {
           setSelectedNodeId(item.node_id);
         }
+        if (item.event_type === "signal.received") {
+          setTopBanner({
+            id: String(item.log_id),
+            badge: "Incoming Signal",
+            tone: "warn",
+            title: `Signal received from ${item.phone_number || "WhatsApp"}`,
+            description: item.message,
+          });
+        }
         if (
           [
             "command.created",
@@ -604,6 +642,43 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             setCommands(cmds);
             setClients(clis);
             setProducts(prods);
+            knownSigRef.current = cmds
+              .map(
+                (c) => `${c.command_id}:${c.status}:${c.quantity}:${c.summary}`,
+              )
+              .join("|");
+            const targetCmd =
+              cmds.find(
+                (c) =>
+                  c.command_id === item.command_id ||
+                  c.command_id.startsWith(`${item.command_id}-`),
+              ) || cmds[0];
+            if (targetCmd && item.event_type !== "command.decided") {
+              const cid = targetCmd.command_id || targetCmd.id || "";
+              setFlashCommandId(cid);
+              const badge =
+                item.event_type === "command.modified"
+                  ? "Order Updated"
+                  : item.event_type === "command.cancelled"
+                    ? "Order Cancelled"
+                    : "New Order";
+              const tone =
+                item.event_type === "command.cancelled"
+                  ? "bad"
+                  : item.event_type === "command.modified"
+                    ? "warn"
+                    : "ok";
+              setTopBanner({
+                id: `${cid}-${Date.now()}`,
+                badge,
+                tone,
+                title: `${targetCmd.client_name || targetCmd.client_id} · ${cid}`,
+                description:
+                  targetCmd.summary ||
+                  `${qty(targetCmd.quantity)} × ${targetCmd.product_name || targetCmd.product_id}`,
+                commandId: cid,
+              });
+            }
           });
         }
       } catch {
@@ -611,6 +686,65 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       }
     };
     return () => source.close();
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(async () => {
+      try {
+        const [cmds, pipe] = await Promise.all([
+          api.getCommands(),
+          api.getPipelineLogs(120),
+        ]);
+        setLogs(pipe);
+        const newSig = cmds
+          .map((c) => `${c.command_id}:${c.status}:${c.quantity}:${c.summary}`)
+          .join("|");
+        if (knownSigRef.current && newSig !== knownSigRef.current) {
+          const prevIds = new Set(
+            knownSigRef.current
+              .split("|")
+              .map((s) => s.split(":")[0])
+              .filter(Boolean),
+          );
+          const added = cmds.find((c) => !prevIds.has(c.command_id));
+          const latest = added || cmds[0];
+          if (latest) {
+            const cid = latest.command_id || latest.id || "";
+            setFlashCommandId(cid);
+            setTopBanner((curr) =>
+              curr?.commandId === cid
+                ? curr
+                : {
+                    id: `${cid}-${Date.now()}`,
+                    badge: added ? "New Order" : "Order Updated",
+                    tone:
+                      latest.status === "cancelled"
+                        ? "bad"
+                        : added
+                          ? "ok"
+                          : "warn",
+                    title: `${latest.client_name || latest.client_id} · ${cid}`,
+                    description:
+                      latest.summary ||
+                      `${qty(latest.quantity)} × ${latest.product_name || latest.product_id}`,
+                    commandId: cid,
+                  },
+            );
+          }
+          const [clis, prods] = await Promise.all([
+            api.getClients(),
+            api.getProducts(),
+          ]);
+          setClients(clis);
+          setProducts(prods);
+        }
+        knownSigRef.current = newSig;
+        setCommands(cmds);
+      } catch {
+        // silent background poll
+      }
+    }, 2500);
+    return () => clearInterval(t);
   }, []);
 
   useEffect(() => {
@@ -914,7 +1048,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             const st = String(cmd.status || "new").toLowerCase();
             const count = Number(cmd.client_order_count || 1);
             return (
-              <tr key={id}>
+              <tr
+                key={id}
+                className={flashCommandId === id ? "row-flash" : undefined}
+              >
                 <td>
                   <span className="mono">{id}</span>
                   <span className="sub">{cmd.summary || "—"}</span>
@@ -2223,6 +2360,50 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
           </section>
         )}
       </main>
+
+      {topBanner && (
+        <div
+          className={`top-order-banner ${topBanner.tone}`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="top-banner-left">
+            <span className="top-banner-icon">S</span>
+            <div className="top-banner-content">
+              <div className="top-banner-head">
+                <span className={`pill ${topBanner.tone}`}>
+                  {topBanner.badge}
+                </span>
+                <strong className="top-banner-title">{topBanner.title}</strong>
+              </div>
+              <div className="top-banner-desc">{topBanner.description}</div>
+            </div>
+          </div>
+          <div className="top-banner-actions">
+            {topBanner.commandId && (
+              <button
+                className="btn small primary"
+                type="button"
+                onClick={() => {
+                  setPage("commands");
+                  setFlashCommandId(topBanner.commandId || null);
+                  setTopBanner(null);
+                }}
+              >
+                View order
+              </button>
+            )}
+            <button
+              className="btn ghost small"
+              type="button"
+              aria-label="Dismiss notification"
+              onClick={() => setTopBanner(null)}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
 
       <div
         className={`toast${toastMsg ? " show" : ""}${toastMsg?.bad ? " bad" : ""}`}

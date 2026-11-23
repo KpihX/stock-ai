@@ -701,6 +701,89 @@ td:first-child { min-width: 195px; }
 .toast.show { opacity: 1; transform: none; }
 .toast.bad { background: var(--terracotta); color: #faf9f5; }
 
+/* Top incoming order notification window (Anthropic editorial card) */
+.top-order-banner {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(640px, calc(100vw - 32px));
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--clay);
+  border-radius: 14px;
+  box-shadow: 0 20px 48px rgba(20, 20, 19, 0.22);
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  animation: topBannerIn .24s cubic-bezier(.16, 1, .3, 1);
+}
+.top-order-banner.ok { border-left-color: var(--sage); }
+.top-order-banner.bad { border-left-color: var(--terracotta); }
+@keyframes topBannerIn {
+  from { opacity: 0; transform: translate(-50%, -14px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.top-banner-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+.top-banner-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--clay) 16%, var(--surface-warm));
+  color: var(--clay);
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 16px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.top-banner-content {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.top-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.top-banner-title {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.top-banner-desc {
+  font-size: 13px;
+  color: var(--ink-muted);
+  line-height: 1.4;
+}
+.top-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.row-flash td {
+  animation: rowFlash 2.4s ease-out;
+}
+@keyframes rowFlash {
+  0% { background: color-mix(in srgb, var(--clay) 26%, var(--surface-warm)); }
+  100% { background: transparent; }
+}
+
 @media (max-width: 1020px) {
   .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat-card:nth-child(2n) { border-right: 0; }

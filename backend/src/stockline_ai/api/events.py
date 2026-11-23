@@ -38,9 +38,13 @@ class EventBus:
     async def stream(self) -> AsyncIterator[str]:
         queue = self.subscribe()
         try:
+            yield json.dumps(
+                {"type": "stream.connected", "ts": datetime.now(UTC).isoformat()},
+                ensure_ascii=False,
+            )
             while True:
                 payload = await queue.get()
-                yield f"event: message\ndata: {payload}\n\n"
+                yield payload
         finally:
             self.unsubscribe(queue)
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -260,30 +259,78 @@ async def start_call(_: str = Depends(verify_token)) -> dict[str, str]:
 async def call_socket(websocket: WebSocket, call_id: str) -> None:
     await websocket.accept()
     transcript: list[str] = []
+    caller_phone = ""
     try:
         while True:
             message = await websocket.receive_json()
+            if message.get("phone"):
+                caller_phone = str(message.get("phone") or "")
             if message.get("type") == "audio":
                 raw = base64.b64decode(message.get("data", ""))
-                tmp = Path("/tmp") / f"call_{call_id}_{len(transcript)}.wav"
+                tmp = Path("/tmp") / f"call_{call_id}_{len(transcript)}.webm"
+                wav = Path("/tmp") / f"call_{call_id}_{len(transcript)}.wav"
                 tmp.write_bytes(raw)
+                text = ""
                 try:
-                    text = subprocess.run(
-                        [
-                            CONFIG.bin_for("stt") or "whisper-cli",
-                            "-m",
-                            str(CONFIG.stt_models_dir / CONFIG.model_for("stt")),
-                            "-f",
-                            str(tmp),
-                            "-nt",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    ).stdout.strip()
-                except (OSError, subprocess.SubprocessError):
+                    ff = await asyncio.create_subprocess_exec(
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        str(tmp),
+                        "-ar",
+                        "16000",
+                        "-ac",
+                        "1",
+                        str(wav),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await ff.communicate()
+                    proc = await asyncio.create_subprocess_exec(
+                        CONFIG.bin_for("stt") or "whisper-cli",
+                        "-m",
+                        str(CONFIG.stt_models_dir / CONFIG.model_for("stt")),
+                        "-l",
+                        "fr",
+                        "-f",
+                        str(wav if wav.is_file() else tmp),
+                        "-nt",
+                        "-np",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    out, _ = await proc.communicate()
+                    text = " ".join(out.decode(errors="ignore").split()).strip()
+                except OSError:
                     text = ""
-                transcript.append(text)
+                if text:
+                    transcript.append(text)
                 await websocket.send_json({"type": "transcript", "text": text, "call_id": call_id})
+            elif message.get("type") == "commit" and transcript:
+                full_text = " ".join(transcript).strip()
+                phone = caller_phone or "33745717350"
+                sig = Signal(
+                    evenement_id=f"call_{call_id}",
+                    capture_le=datetime.now(UTC),
+                    canal="call",
+                    actor_ref=phone,
+                    cNumber=phone,
+                    modality="audio",
+                    texte=full_text,
+                )
+                asyncio.create_task(handle_signal(sig))
     except WebSocketDisconnect:
+        if transcript:
+            full_text = " ".join(transcript).strip()
+            phone = caller_phone or "33745717350"
+            sig = Signal(
+                evenement_id=f"call_{call_id}",
+                capture_le=datetime.now(UTC),
+                canal="call",
+                actor_ref=phone,
+                cNumber=phone,
+                modality="audio",
+                texte=full_text,
+            )
+            asyncio.create_task(handle_signal(sig))
         return
