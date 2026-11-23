@@ -54,6 +54,7 @@ services:
       start_period: 10s
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
       - "traefik.http.routers.stockline.rule=Host(`stockline-ai.kpihx-labs.com`)"
       - "traefik.http.routers.stockline.entrypoints=websecure"
       - "traefik.http.routers.stockline.tls=true"
