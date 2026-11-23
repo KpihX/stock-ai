@@ -163,10 +163,18 @@ async def transcribe_wav(
     except Exception as exc:
         fallback = active_cfg.fallback_for("stt")
         if fallback and fallback != primary:
-            res = await _dispatch_wav(wav_path, fallback, product_names, active_cfg)
-            res["fallback_from"] = primary
-            res["primary_error"] = str(exc)
-            return res
+            try:
+                res = await _dispatch_wav(wav_path, fallback, product_names, active_cfg)
+                res["fallback_from"] = primary
+                res["primary_error"] = str(exc)
+                return res
+            except Exception as fb_exc:
+                return {
+                    "text": "",
+                    "provider": fallback,
+                    "fallback_from": primary,
+                    "error": f"{exc} | fallback {fallback}: {fb_exc}",
+                }
         return {"text": "", "provider": primary, "error": str(exc)}
 
 

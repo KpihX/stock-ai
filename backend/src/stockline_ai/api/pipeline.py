@@ -408,11 +408,30 @@ async def handle_signal(signal: Signal) -> dict[str, Any]:
         }
     )
 
-    normalized = await normalize(
-        enriched.model_dump(mode="json"),
-        run_tool,
-        event_logger=publish,
-    )
+    try:
+        normalized = await normalize(
+            enriched.model_dump(mode="json"),
+            run_tool,
+            event_logger=publish,
+        )
+    except Exception as exc:
+        await publish(
+            {
+                "type": "llm.error",
+                "node": "llm.nemotron",
+                "client_id": client["client_id"],
+                "phone_number": phone,
+                "status": "rejected",
+                "message": f"LLM extraction failed: {exc}",
+                "error": str(exc),
+            }
+        )
+        return {
+            "status": "error",
+            "reason": "llm_error",
+            "detail": str(exc),
+            "client_id": client["client_id"],
+        }
     action = str(normalized.get("action") or "create").lower().strip()
     if action not in {"create", "modify", "cancel"}:
         action = "create"
