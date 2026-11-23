@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from ..config import validate_startup
+from ..version import get_version
 from . import admin, calls, db, stt, whats
 from .auth import check_credentials, create_token, get_claims, verify_token
 from .events import BUS
@@ -40,7 +41,7 @@ async def lifespan(app: FastAPI):
     await db.close()
 
 
-app = FastAPI(title="Stockline API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Stockline API", version=get_version(), lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

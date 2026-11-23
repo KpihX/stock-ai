@@ -62,6 +62,14 @@ make logs     # follows stockline-api logs
 ## Verification & Deployment
 
 ```bash
+make help             # lists all root Makefile targets
+make init             # generates .env + docker-compose.override.yml and seeds DB
+make seed             # brings stack up and runs backend/db/init.sql
+make seed-random      # seeds random clients, products and commands
+make setup            # init + uv sync + npm install
+make db / make db-logs
+make backend / make frontend / make dev
+make up / make down / make logs / make ps
 make check            # ruff format/lint, py_compile, pyright, pytest
 make push             # pushes current branch to GitLab first, then GitHub
 make deploy-frontend  # deploys frontend/ to Vercel production
