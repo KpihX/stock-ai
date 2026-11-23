@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/zsh
 
-PKG_NAME      := stockline-ai
+PKG_NAME      := stock-ai
 PKG_DIR_NAME  := stockline_ai
 PKG_DIR       := src/$(PKG_DIR_NAME)
 VERSION       := $(shell grep -m 1 '^version' pyproject.toml | tr -s ' ' | cut -d'"' -f2)

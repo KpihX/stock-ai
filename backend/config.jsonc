@@ -118,7 +118,7 @@
 
   // Generic runtime values. Paths use ~ so the project stays portable.
   "runtime": {
-    "state_dir": "~/.local/share/stockline-ai",
+    "state_dir": "~/.local/share/stock-ai",
     "hitl_timeout_seconds": 600,
     "debug": false
   }

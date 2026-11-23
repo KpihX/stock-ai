@@ -1,4 +1,4 @@
-# CONTRACT.md - stockline-ai
+# CONTRACT.md - stock-ai
 
 Source of truth for the external behavior of this package. Metadata lives in pyproject.toml.
 
@@ -33,6 +33,6 @@ Turn messy supplier orders from WhatsApp voice notes, text and photos into valid
 
 ## Transport mapping
 
-- CLI: Typer commands (`stockline-ai`) with Rich output.
-- HTTP / SSE / WebSocket API: FastAPI (`stockline-api`) deployed behind Traefik HTTPS at `https://stockline-ai.kpihx-labs.com`.
+- CLI: Typer commands (`stock-ai`) with Rich output.
+- HTTP / SSE / WebSocket API: FastAPI (`stock-api`) deployed behind Traefik HTTPS at `https://stock-api.kpihx-labs.com`.
 - WhatsApp & VoIP transport: embedded Node 22 listener (`backend/wa/`) using `@innovatorssoft/baileys` and `werift` over localhost HTTP + WebRTC.

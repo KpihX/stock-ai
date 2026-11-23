@@ -1576,7 +1576,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       return <p className="empty">No commands recorded yet.</p>;
     }
     return (
-      <table>
+      <table className="responsive-table">
         <thead>
           <tr>
             <th>Command</th>
@@ -1600,7 +1600,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 className={`clickable-row${flashCommandId === id ? " row-flash" : ""}${selectedCommandDetail?.command.command_id === id ? " selected" : ""}`}
                 onClick={() => void openCommandDetail(id)}
               >
-                <td>
+                <td data-label="Command">
                   <div className="cmd-id-row">
                     <span className="mono">{id}</span>
                     <span className={`pill ${sourceChannelTone(cmd.source_channel)}`}>
@@ -1609,7 +1609,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                   </div>
                   <span className="sub">{cmd.summary || "—"}</span>
                 </td>
-                <td>
+                <td data-label="Client">
                   <div className="client-cell">
                     <strong>{cmd.client_name || cmd.client_id}</strong>
                     <span className="sub mono">
@@ -1626,19 +1626,19 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                     </div>
                   </div>
                 </td>
-                <td>
+                <td data-label="Product">
                   <span>{cmd.product_name || cmd.product_id || "—"}</span>
                   <span className="sub mono">{cmd.product_id || ""}</span>
                 </td>
-                <td>{qty(cmd.quantity)}</td>
-                {!compact && <td>{money(cmd.price)}</td>}
-                <td>
+                <td data-label="Qty">{qty(cmd.quantity)}</td>
+                {!compact && <td data-label="Unit (€)">{money(cmd.price)}</td>}
+                <td data-label="Status">
                   <span className={`pill ${statusPillClass(cmd.status)}`}>
                     {statusLabel(cmd.status)}
                   </span>
                 </td>
-                {!compact && <td>{dateLabel(cmd.recorded_at)}</td>}
-                <td onClick={(e) => e.stopPropagation()}>
+                {!compact && <td data-label="Received">{dateLabel(cmd.recorded_at)}</td>}
+                <td data-label="Decision" onClick={(e) => e.stopPropagation()}>
                   {editingCommandId === id ? (
                     <div className="decision-cell">
                       <div className="row-actions">
@@ -1841,12 +1841,13 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 onClick={() => setPage("settings")}
               >
                 <span className="dot" />
-                <span>WhatsApp · {waLabel}</span>
+                <span className="wa-prefix">WhatsApp · </span>
+                <span>{waLabel}</span>
               </button>
             )}
             <button
               type="button"
-              className="btn ghost small"
+              className="btn ghost small desktop-only"
               onClick={() =>
                 setThemeState((t) => (t === "dark" ? "light" : "dark"))
               }
@@ -1860,7 +1861,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             </span>
             <button
               type="button"
-              className="btn ghost small"
+              className="btn ghost small desktop-only"
               onClick={onLogout}
             >
               Sign out
@@ -1868,9 +1869,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             <button
               type="button"
               className="btn ghost small menu-toggle"
+              aria-expanded={mobileMenu}
               onClick={() => setMobileMenu((m) => !m)}
             >
-              Menu
+              {mobileMenu ? "Close" : "Menu"}
             </button>
           </div>
         </div>
@@ -1902,6 +1904,27 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 {label}
               </button>
             ))}
+            <div className="mobile-nav-actions">
+              <button
+                type="button"
+                className="btn ghost small"
+                onClick={() =>
+                  setThemeState((t) => (t === "dark" ? "light" : "dark"))
+                }
+              >
+                {theme === "dark" ? "Light mode" : "Dark mode"}
+              </button>
+              <button
+                type="button"
+                className="btn ghost small reject"
+                onClick={() => {
+                  setMobileMenu(false);
+                  onLogout();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
           </nav>
         )}
       </header>
@@ -2127,7 +2150,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 <span className="pill muted">{products.length} items</span>
               </div>
               <div className="table-wrap">
-                <table>
+                <table className="responsive-table">
                   <thead>
                     <tr>
                       <th>ID</th>
@@ -2143,10 +2166,10 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                       const name = p.product_name || p.article_name || p.product_id;
                       return (
                         <tr key={p.product_id}>
-                          <td className="mono">{p.product_id}</td>
-                          <td>{name}</td>
-                          <td>{money(p.price)}</td>
-                          <td>
+                          <td data-label="ID" className="mono">{p.product_id}</td>
+                          <td data-label="Product">{name}</td>
+                          <td data-label="Price (€)">{money(p.price)}</td>
+                          <td data-label="Stock">
                             {qty(p.stock)}{" "}
                             {stk <= 0 ? (
                               <span className="pill bad">Out of stock</span>
@@ -2157,7 +2180,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                             )}
                           </td>
                           {role === "admin" && (
-                            <td>
+                            <td data-label="Actions">
                               <div className="row-actions">
                                 <button
                                   className="btn ghost small"
@@ -2316,7 +2339,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                   <span className="pill muted">{clients.length} clients</span>
                 </div>
                 <div className="table-wrap">
-                  <table>
+                  <table className="responsive-table">
                     <thead>
                       <tr>
                         <th>ID</th>
@@ -2337,8 +2360,8 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                             className={`clickable-row${selectedClientId === c.client_id ? " selected" : ""}`}
                             onClick={() => void openClientProfile(c.client_id)}
                           >
-                            <td className="mono">{c.client_id}</td>
-                            <td>
+                            <td data-label="ID" className="mono">{c.client_id}</td>
+                            <td data-label="Client">
                               <strong>{c.client_name}</strong>
                               <span className="sub">
                                 {count === 0
@@ -2348,12 +2371,12 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                                     : `Returning buyer (${count} orders)`}
                               </span>
                             </td>
-                            <td className="mono">{c.phone_number}</td>
-                            <td>{count}</td>
-                            <td>{money(c.total_spent)}</td>
-                            <td className="mono">{c.usual_product || "—"}</td>
+                            <td data-label="WhatsApp">{c.phone_number}</td>
+                            <td data-label="Orders">{count}</td>
+                            <td data-label="Total (€)">{money(c.total_spent)}</td>
+                            <td data-label="Usual item" className="mono">{c.usual_product || "—"}</td>
                             {role === "admin" && (
-                              <td onClick={(e) => e.stopPropagation()}>
+                              <td data-label="Actions" onClick={(e) => e.stopPropagation()}>
                                 <div className="row-actions">
                                   <button
                                     className="btn ghost small"
@@ -2550,7 +2573,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 </div>
 
                 <div className="table-wrap">
-                  <table>
+                  <table className="responsive-table">
                     <thead>
                       <tr>
                         <th>Command</th>
@@ -2569,7 +2592,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                           className="clickable-row"
                           onClick={() => void openCommandDetail(cmd.command_id)}
                         >
-                          <td>
+                          <td data-label="Command">
                             <div className="cmd-id-row">
                               <span className="mono">{cmd.command_id}</span>
                               <span className={`pill ${sourceChannelTone(cmd.source_channel)}`}>
@@ -2578,26 +2601,26 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                             </div>
                             <span className="sub">{cmd.summary || ""}</span>
                           </td>
-                          <td>
+                          <td data-label="Product">
                             {cmd.product_name || cmd.product_id}{" "}
                             <span className="sub mono">{cmd.product_id}</span>
                           </td>
-                          <td>{qty(cmd.quantity)}</td>
-                          <td>{money(cmd.price)}</td>
-                          <td>
+                          <td data-label="Qty">{qty(cmd.quantity)}</td>
+                          <td data-label="Price (€)">{money(cmd.price)}</td>
+                          <td data-label="Status">
                             <span
                               className={`pill ${statusPillClass(cmd.status)}`}
                             >
                               {statusLabel(cmd.status)}
                             </span>
                           </td>
-                          <td>
+                          <td data-label="Decision">
                             {cmd.decision_comment || "—"}{" "}
                             {cmd.decided_by && (
                               <span className="sub">by {cmd.decided_by}</span>
                             )}
                           </td>
-                          <td>{dateLabel(cmd.recorded_at)}</td>
+                          <td data-label="Date">{dateLabel(cmd.recorded_at)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -3035,7 +3058,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 </div>
                 <div className="table-wrap">
                   {managers.length ? (
-                    <table>
+                    <table className="responsive-table">
                       <thead>
                         <tr>
                           <th>Username</th>
@@ -3047,16 +3070,16 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                       <tbody>
                         {managers.map((m) => (
                           <tr key={m.username}>
-                            <td className="mono">{m.username}</td>
-                            <td>
+                            <td data-label="Username" className="mono">{m.username}</td>
+                            <td data-label="Status">
                               {m.is_active ? (
                                 <span className="pill ok">active</span>
                               ) : (
                                 <span className="pill bad">disabled</span>
                               )}
                             </td>
-                            <td>{dateLabel(m.created_at)}</td>
-                            <td>
+                            <td data-label="Created">{dateLabel(m.created_at)}</td>
+                            <td data-label="Actions">
                               <div className="row-actions">
                                 <button
                                   className="btn ghost small"
@@ -3196,7 +3219,24 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
             onClick={(e) => e.stopPropagation()}
           >
             {commandDetailLoading && !selectedCommandDetail ? (
-              <p className="empty">Loading order provenance...</p>
+              <div className="drawer-head">
+                <div>
+                  <h2>Loading order provenance...</h2>
+                  <p className="muted" style={{ fontSize: 13 }}>
+                    Fetching source channel, transcripts and pipeline trace.
+                  </p>
+                </div>
+                <button
+                  className="btn ghost small"
+                  type="button"
+                  onClick={() => {
+                    setCommandDetailLoading(false);
+                    setSelectedCommandDetail(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             ) : selectedCommandDetail ? (
               <>
                 <div className="drawer-head">
@@ -3411,7 +3451,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
                 {activeCall.transcripts.length > 0
                   ? `"${activeCall.transcripts[activeCall.transcripts.length - 1].text}"`
                   : activeCall.status === "ringing"
-                    ? "Customer is calling the paired Stockline WhatsApp line. Answer in browser via WebRTC Opus."
+                    ? "Customer is calling the paired Stock AI WhatsApp line. Answer in browser via WebRTC Opus."
                     : "Bidirectional WebRTC Opus (48 kHz) active — Whisper is listening."}
               </div>
             </div>

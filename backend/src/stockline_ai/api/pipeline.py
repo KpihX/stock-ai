@@ -154,14 +154,14 @@ async def _send_auto_ack(
         return False
     if action == "modify":
         text = (
-            f"Stockline · Votre commande {command_id} a été mise à jour : "
+            f"Stock AI · Votre commande {command_id} a été mise à jour : "
             f"{summary} (en attente de validation)."
         )
     elif action == "cancel":
-        text = f"Stockline · Votre commande {command_id} a bien été annulée. {summary}".strip()
+        text = f"Stock AI · Votre commande {command_id} a bien été annulée. {summary}".strip()
     else:
         text = (
-            f"Stockline · Commande {command_id} bien reçue : {summary} (en attente de validation)."
+            f"Stock AI · Commande {command_id} bien reçue : {summary} (en attente de validation)."
         )
     try:
         await whats.send_ack(phone, text)

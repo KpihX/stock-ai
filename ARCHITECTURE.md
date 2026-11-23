@@ -1,4 +1,4 @@
-# Architecture - stockline-ai (Mermaid)
+# Architecture - stock-ai (Mermaid)
 
 Source sketch: image from Ivann Kamdem, 22/11.
 
@@ -52,13 +52,13 @@ flowchart LR
 ## Deployment Topology
 
 ```
-[ Browser: https://stockline-ai.vercel.app ]
+[ Browser: https://stock-ai.kpihx-labs.com (stock-ai.vercel.app) ]
         |  HTTPS REST / SSE / WSS + WebRTC Opus 48 kHz
         v
-[ Traefik HTTPS: https://stockline-ai.kpihx-labs.com ]
+[ Traefik HTTPS: https://stock-api.kpihx-labs.com ]
         |
         v
-[ stockline-api (FastAPI :8000 + Node 22 Baileys/werift :3001) ] ---> [ stockline-postgres (PostgreSQL 17) ]
+[ stock-api (FastAPI :8000 + Node 22 Baileys/werift :3001) ] ---> [ stock-postgres (PostgreSQL 17) ]
         |
         +--> backend/config.jsonc (bind-mounted & hot-reloaded on mtime change)
         +--> NVIDIA NIM APIs (Whisper Large v3 gRPC, Parakeet gRPC, Nemotron 3.5 VL, Nemotron 3 Ultra 550B)

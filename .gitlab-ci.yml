@@ -12,7 +12,7 @@ deploy_homelab:
   only:
     - main
   script:
-    - echo "Deploying stockline-ai backend to homelab..."
+    - echo "Deploying stock-ai backend to homelab..."
     - echo "DEBUG=false" > .env
     - echo "JWT_SECRET=${JWT_SECRET:-$(openssl rand -base64 48)}" >> .env
     - echo "NVIDIA_API_KEY=$NVIDIA_API_KEY" >> .env
@@ -21,31 +21,32 @@ deploy_homelab:
     - echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> .env
     - echo "STOCKLINE_ADMIN_USER=admin" >> .env
     - echo "STOCKLINE_ADMIN_PASSWORD=$STOCKLINE_ADMIN_PASSWORD" >> .env
-    - echo "STOCKLINE_FRONTEND_URL=https://stockline-ai.vercel.app" >> .env
+    - echo "STOCKLINE_FRONTEND_URL=https://stock-ai.kpihx-labs.com" >> .env
     - docker builder prune -af --filter "until=1h" || true
     - docker image prune -f || true
-    - docker compose -p stockline-ai config -q
-    - docker rm -f stockline-api || true
-    - docker compose -p stockline-ai up -d --build --remove-orphans
+    - docker compose -p stock-ai config -q
+    - docker compose -p stockline-ai down --remove-orphans || true
+    - docker rm -f stockline-api stockline-postgres stock-api || true
+    - docker compose -p stock-ai up -d --build --remove-orphans
     - |
       for attempt in $(seq 1 45); do
-        status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' stockline-api 2>/dev/null || true)"
+        status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' stock-api 2>/dev/null || true)"
         if [ "$status" = "healthy" ]; then
           break
         fi
         if [ "$status" = "unhealthy" ]; then
-          docker ps -a --filter name=stockline
-          docker logs --tail 120 stockline-api
+          docker ps -a --filter name=stock
+          docker logs --tail 120 stock-api
           exit 1
         fi
         sleep 2
       done
     - |
-      if ! docker inspect --format '{{.State.Health.Status}}' stockline-api | grep -qx healthy; then
-        docker ps -a --filter name=stockline
-        docker logs --tail 120 stockline-api
+      if ! docker inspect --format '{{.State.Health.Status}}' stock-api | grep -qx healthy; then
+        docker ps -a --filter name=stock
+        docker logs --tail 120 stock-api
         exit 1
       fi
-    - docker exec stockline-api curl -fsS http://127.0.0.1:8000/health
-    - docker logs --tail 25 stockline-api
+    - docker exec stock-api curl -fsS http://127.0.0.1:8000/health
+    - docker logs --tail 25 stock-api
     - docker image prune -f || true

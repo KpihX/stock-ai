@@ -12,13 +12,13 @@ export default function BrandLogo({
       <div className="login-brand-lockup">
         <img
           src="/favicon.svg"
-          alt="Stockline AI"
+          alt="Stock AI"
           width={size}
           height={size}
           className="brand-icon login-icon"
         />
         <div className="login-brand-row">
-          <h1 className="login-brand">Stockline</h1>
+          <h1 className="login-brand">Stock</h1>
           <span className="brand-ai-pill">AI</span>
         </div>
       </div>
@@ -34,7 +34,7 @@ export default function BrandLogo({
         height={size}
         className="brand-icon"
       />
-      <span className="brand-wordmark">Stockline</span>
+      <span className="brand-wordmark">Stock</span>
       <span className="brand-ai-pill">AI</span>
     </span>
   );

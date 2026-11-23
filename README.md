@@ -1,14 +1,14 @@
-# stockline-ai
+# stock-ai
 
-Agentic AI intake, order normalization, and human-in-the-loop (HITL) approval platform for food supply chain wholesalers, built for the X-Forum and Stockline hackathon.
+Agentic AI intake, order normalization, and human-in-the-loop (HITL) approval platform for food supply chain wholesalers.
 
 ## Production URLs
 
 | Surface | URL | Hosting |
 | --- | --- | --- |
-| Admin Dashboard (Frontend) | https://stockline-ai.vercel.app | Vercel (React + Vite + TypeScript) |
-| API & WhatsApp/VoIP Bridge | https://stockline-ai.kpihx-labs.com | Proxmox Homelab Docker + Traefik HTTPS |
-| Health Check | https://stockline-ai.kpihx-labs.com/health | FastAPI (`{"status":"ok"}`) |
+| Admin Dashboard (Frontend) | https://stock-ai.kpihx-labs.com (alias `https://stock-ai.vercel.app`) | Vercel (React + Vite + TypeScript) |
+| API & WhatsApp/VoIP Bridge | https://stock-api.kpihx-labs.com | Proxmox Homelab Docker + Traefik HTTPS |
+| Health Check | https://stock-api.kpihx-labs.com/health | FastAPI (`{"status":"ok"}`) |
 
 ## Architecture Overview
 
@@ -43,7 +43,7 @@ WhatsApp Client (Text / Voice .ogg / Image .png / VoIP Call)
 
 ### Frontend (`frontend/`)
 - **Runtime**: Node >= 20.19, React 19, Vite 7, TypeScript 5.8
-- **Deployment**: Vercel (`vercel.json` SPA rewrites, `VITE_API_BASE_URL` pointing to `https://stockline-ai.kpihx-labs.com` in production)
+- **Deployment**: Vercel (`vercel.json` SPA rewrites, `VITE_API_BASE_URL` pointing to `https://stock-api.kpihx-labs.com` in production)
 
 ## Quick Start (Local)
 
@@ -55,8 +55,8 @@ make dev      # runs FastAPI (:8000) and Vite (:5173) locally against PostgreSQL
 Or run the full Docker stack locally:
 
 ```bash
-make up       # builds and starts stockline-postgres + stockline-api
-make logs     # follows stockline-api logs
+make up       # builds and starts stock-postgres + stock-api
+make logs     # follows stock-api logs
 ```
 
 ## Verification & Deployment
@@ -75,4 +75,4 @@ make push             # pushes current branch to GitLab first, then GitHub
 make deploy-frontend  # deploys frontend/ to Vercel production
 ```
 
-Production backend deployment is automated on push to `main` via `.gitlab-ci.yml` (`homelab` runner -> `docker compose -p stockline-ai up -d --build`).
+Production backend deployment is automated on push to `main` via `.gitlab-ci.yml` (`homelab` runner -> `docker compose -p stock-ai up -d --build`).

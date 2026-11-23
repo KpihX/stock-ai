@@ -1,1 +1,1 @@
-"""FastAPI backend for stockline-ai."""
+"""FastAPI backend for stock-ai."""

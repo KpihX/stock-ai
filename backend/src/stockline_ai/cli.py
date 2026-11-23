@@ -1,4 +1,4 @@
-"""Thin Typer entry point for stockline-ai."""
+"""Thin Typer entry point for stock-ai."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ console = Console()
 @app.command()
 def version() -> None:
     """Print the package version."""
-    console.print(f"stockline-ai {__version__}")
+    console.print(f"stock-ai {__version__}")
 
 
 @app.command()

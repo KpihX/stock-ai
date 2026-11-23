@@ -1,4 +1,4 @@
-"""Structured runtime configuration for stockline-ai.
+"""Structured runtime configuration for stock-ai.
 
 All defaults, models, URLs and paths live in config.jsonc at the project root.
 The environment holds secrets only. Every brick is resolved through the
@@ -173,7 +173,7 @@ class Config:
 
     @property
     def state_dir(self) -> Path:
-        return self.path_for("state_dir", "~/.local/share/stockline-ai")
+        return self.path_for("state_dir", "~/.local/share/stock-ai")
 
     @property
     def whats_proxy_state_dir(self) -> Path:

@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     await db.close()
 
 
-app = FastAPI(title="Stockline API", version=get_version(), lifespan=lifespan)
+app = FastAPI(title="Stock AI API", version=get_version(), lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -302,7 +302,7 @@ async def approve_command(
     product_label = str(row.get("product_name") or row.get("product_id") or "")
     action_label = "approuvée" if payload.approve else "rejetée"
     wa_text = (
-        f"Stockline · Votre commande {command_id} ({qty:g} × {product_label}) a été {action_label}."
+        f"Stock AI · Votre commande {command_id} ({qty:g} × {product_label}) a été {action_label}."
     )
     if comment:
         wa_text = f"{wa_text}\nCommentaire : {comment}"

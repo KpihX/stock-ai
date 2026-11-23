@@ -279,7 +279,7 @@ async function connect(expectedGen = socketGen): Promise<void> {
       const activeSock = createWASocket({
         version,
         auth: state,
-        browser: ['Stockline', 'Chrome', '1.0.0'],
+        browser: ['Stock AI', 'Chrome', '1.0.0'],
         voip: {
           maxConcurrentCalls: callsCfg.maxConcurrentCalls,
           pthreadPoolSize: callsCfg.pthreadPoolSize,

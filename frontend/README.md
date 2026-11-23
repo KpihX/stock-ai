@@ -1,6 +1,6 @@
-# Stockline frontend
+# Stock AI frontend
 
-React + TypeScript + Vite dashboard for Stockline AI. It connects to the FastAPI backend over HTTPS REST, streams real-time pipeline events over SSE, and handles live inbound WhatsApp VoIP calls via WebRTC (48 kHz Opus) and WebSocket.
+React + TypeScript + Vite dashboard for Stock AI. It connects to the FastAPI backend over HTTPS REST, streams real-time pipeline events over SSE, and handles live inbound WhatsApp VoIP calls via WebRTC (48 kHz Opus) and WebSocket.
 
 ## Dependencies
 
@@ -31,11 +31,11 @@ npm run preview
 
 | Variable | Local Default | Production Value | Purpose |
 | --- | --- | --- | --- |
-| `VITE_API_BASE_URL` | `http://localhost:8000` | `https://stockline-ai.kpihx-labs.com` | Base URL of the FastAPI backend (`http`/`ws` locally, `https`/`wss` in prod) |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | `https://stock-api.kpihx-labs.com` | Base URL of the FastAPI backend (`http`/`ws` locally, `https`/`wss` in prod) |
 
 ## Deploy to Vercel
 
-Production URL: `https://stockline-ai.vercel.app`
+Production URLs: `https://stock-ai.kpihx-labs.com` (alias `https://stock-ai.vercel.app`)
 
 ```bash
 vercel --prod

@@ -1,5 +1,5 @@
 [project]
-name = "stockline-ai"
+name = "stock-ai"
 version = "0.2.0"
 description = "Agentic AI for the food supply chain: voice orders, demand forecasting and supervised purchasing"
 readme = "README.md"
@@ -46,8 +46,8 @@ dev = [
 ]
 
 [project.scripts]
-stockline-ai = "stockline_ai.cli:app"
-stockline-api = "stockline_ai.api.main:run"
+stock-ai = "stockline_ai.cli:app"
+stock-api = "stockline_ai.api.main:run"
 
 [tool.uv]
 package = true

@@ -1093,6 +1093,20 @@ td:first-child { min-width: 195px; }
   gap: 8px;
 }
 
+.mobile-nav-actions {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+.main > section, .panel, .split-layout > *, .dashboard-grid > *, .settings-grid > *, .n8n-drawer > *, .call-history-grid > * {
+  min-width: 0;
+}
+
 @media (max-width: 1020px) {
   .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .stat-card:nth-child(2n) { border-right: 0; }
@@ -1103,15 +1117,87 @@ td:first-child { min-width: 195px; }
   .header-nav { display: none; }
   .menu-toggle { display: inline-flex; }
   .user-chip { display: none; }
-  .header-inner { padding: 0 16px; }
-  .main { padding: 24px 16px 48px; }
-  .page-head h1 { font-size: 26px; }
+  .header-inner { padding: 0 16px; gap: 10px; }
+  .main { padding: 20px 14px 56px; }
+  .page-head { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 16px; }
+  .page-head h1 { font-size: 25px; }
   .transcript-entry { grid-template-columns: 1fr; gap: 4px; }
+  .n8n-viewport { height: 340px; }
+}
+@media (max-width: 640px) {
+  .desktop-only { display: none !important; }
+  .wa-prefix { display: none; }
+  .header-inner { padding: 0 12px; }
+  .main { padding: 16px 12px 48px; }
+  .panel { padding: 14px; }
+  .panel-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .toolbar { gap: 8px; }
+  .toolbar .input, .toolbar .input.narrow, .toolbar .btn { flex: 1 1 100%; width: 100%; }
+  input, select { font-size: 16px; }
+  .decision-input { font-size: 15px; }
+  .call-inject-row > *, .call-sim-form > * { flex: 1 1 100% !important; width: 100%; }
+  .actions .btn { flex: 1 1 100%; }
+
+  /* Stacked card tables on mobile: zero horizontal overflow */
+  .table-wrap { overflow-x: visible; }
+  table.responsive-table { min-width: 0; width: 100%; display: block; }
+  table.responsive-table thead { display: none; }
+  table.responsive-table tbody { display: grid; gap: 10px; }
+  table.responsive-table tbody tr {
+    display: grid;
+    gap: 8px;
+    padding: 13px;
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    background: var(--surface-warm);
+  }
+  table.responsive-table tbody td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 4px 0;
+    border-bottom: 1px dashed color-mix(in srgb, var(--border-soft) 75%, transparent);
+    text-align: right;
+    min-width: 0;
+  }
+  table.responsive-table tbody td:first-child { min-width: 0; }
+  table.responsive-table tbody td:last-child { border-bottom: 0; padding-top: 6px; flex-direction: column; align-items: stretch; text-align: left; }
+  table.responsive-table tbody td::before {
+    content: attr(data-label);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink-faint);
+    text-align: left;
+    flex-shrink: 0;
+    padding-top: 2px;
+  }
+  table.responsive-table tbody td:last-child::before { margin-bottom: 4px; }
+  table.responsive-table tbody td .sub { max-width: none; text-align: right; word-break: break-word; }
+  table.responsive-table tbody td .cmd-id-row { justify-content: flex-end; }
+  table.responsive-table tbody td .client-cell { align-items: flex-end; }
+  table.responsive-table tbody td .decision-cell { width: 100%; min-width: 0; }
+  table.responsive-table tbody td .row-actions { width: 100%; }
+  table.responsive-table tbody td .row-actions .btn { flex: 1 1 auto; }
+
+  .top-order-banner, .incoming-call-banner {
+    top: 64px;
+    width: calc(100vw - 20px);
+    padding: 12px 14px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .top-banner-actions { width: 100%; justify-content: flex-end; }
+  .top-banner-actions .btn { flex: 1 1 auto; }
+  .command-drawer { width: 100vw; border-left: 0; padding: 16px; }
+  .meta-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .meta-row strong { text-align: left; word-break: break-word; }
+  .n8n-viewport { height: 290px; }
+  .toast { left: 12px; right: 12px; bottom: 12px; max-width: none; text-align: center; }
 }
 @media (max-width: 520px) {
   .kpi-strip { grid-template-columns: 1fr; }
-  .stat-card { border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  .stat-card { border-right: 0; border-bottom: 1px solid var(--border-soft); padding: 14px 16px; }
   .stat-card:last-child { border-bottom: 0; }
-  .panel { padding: 16px; }
-  .command-drawer { padding: 16px; }
 }

@@ -1,6 +1,6 @@
-# stockline-ai
+# stock-ai
 
-Agentic AI for the food supply chain, built for the X-Forum and Stockline hackathon.
+Agentic AI for the food supply chain.
 
 ## Goal
 
@@ -25,15 +25,15 @@ Core production dependencies include `fastapi`, `uvicorn[standard]`, `asyncpg`, 
 ## Usage
 
 ```bash
-uv run stockline-ai --help
-uv run stockline-ai version
-uv run stockline-ai status
-uv run stockline-api
+uv run stock-ai --help
+uv run stock-ai version
+uv run stock-ai status
+uv run stock-api
 ```
 
 Configuration lives in `backend/config.jsonc`: brick selection, generic settings, per-provider overrides (`nvidia_whisper`, `nvidia_parakeet`, `whisper`, `nemotron_vl`, `tesseract`), prompts (`system_prompt`, `ocr_prompt`), and runtime values. `backend/config.jsonc` is bind-mounted into `/app/config.jsonc` in Docker and hot-reloaded automatically on `mtime` changes without restarting the API container. Everything else, meaning secrets and only secrets, lives in the root `.env`: copy `.env.example` and fill the provider keys. Never commit `.env`.
 
-`uv run stockline-ai providers` shows the active stack and whether each required key is present. To swap a brick (`stt`, `ocr`, `calls`, `tts`, `agent_llm`), edit `selection.*` or `overrides.*` in `backend/config.jsonc`.
+`uv run stock-ai providers` shows the active stack and whether each required key is present. To swap a brick (`stt`, `ocr`, `calls`, `tts`, `agent_llm`), edit `selection.*` or `overrides.*` in `backend/config.jsonc`.
 
 ## Make targets
 

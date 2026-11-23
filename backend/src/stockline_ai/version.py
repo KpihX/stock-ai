@@ -16,4 +16,4 @@ def get_version() -> str:
         with pyproject.open("rb") as handle:
             data = tomllib.load(handle)
         return str(data["project"]["version"])
-    return metadata.version("stockline-ai")
+    return metadata.version("stock-ai")

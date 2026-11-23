@@ -4684,7 +4684,7 @@ wheels = [
 ]
 
 [[package]]
-name = "stockline-ai"
+name = "stock-ai"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [

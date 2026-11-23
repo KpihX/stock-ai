@@ -1,4 +1,4 @@
-"""stockline-ai: agentic AI for the food supply chain."""
+"""stock-ai: agentic AI for the food supply chain."""
 
 from .version import get_version
 

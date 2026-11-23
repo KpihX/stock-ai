@@ -1,4 +1,4 @@
-# AGENTS.md - stockline-ai
+# AGENTS.md - stock-ai
 
 Project context for all AI agents working in this repository. Loaded automatically at the project root.
 
@@ -13,11 +13,11 @@ Before replying, check: an ASCII diagram for the main idea, a table for comparis
 
 ## Purpose
 
-Stockline AI is the hackathon project for the X-Forum and Stockline event. It builds agentic AI for the food supply chain: WhatsApp voice orders converted into ERP lines, demand forecasting, supervised purchasing and a live voice ordering agent. The deliverable is a 24 hour demo plus a pitch.
+Stock AI builds agentic AI for the food supply chain: WhatsApp voice orders converted into ERP lines, demand forecasting, supervised purchasing and a live voice ordering agent. The deliverable is a 24 hour demo plus a pitch.
 
 ## Stack
 
-Python 3.12 or newer, uv, package stockline_ai, CLI stockline-ai.
+Python 3.12 or newer, uv, package stockline_ai, CLI stock-ai.
 Core libraries from pyproject.toml: typer, rich, pydantic, pydantic-ai, httpx, python-dotenv.
 Optional extras: forecast for statsforecast and darts, voice for pipecat-ai.
 External runtime already installed on this machine: whats-proxy for Baileys and the WhatsApp store, whisper-cli and k-whisper for speech to text, k-piper for text to speech, tesseract for OCR.

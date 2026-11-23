@@ -1,9 +1,9 @@
-name: stockline-ai
+name: stock-ai
 
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: stockline-postgres
+    container_name: stock-postgres
     restart: unless-stopped
     env_file:
       - path: .env
@@ -21,22 +21,22 @@ services:
       timeout: 3s
       retries: 10
     networks:
-      stockline:
+      stock:
         aliases:
-          - stockline-postgres
+          - stock-postgres
 
   api:
     build:
       context: ./backend
-    container_name: stockline-api
+    container_name: stock-api
     restart: unless-stopped
     env_file:
       - path: .env
         required: false
     environment:
-      STOCKLINE_DATABASE_URL: postgresql://${DB_USER:-stockline}:${POSTGRES_PASSWORD:-stockline}@stockline-postgres:5432/${DB_NAME:-stockline}
+      STOCKLINE_DATABASE_URL: postgresql://${DB_USER:-stockline}:${POSTGRES_PASSWORD:-stockline}@stock-postgres:5432/${DB_NAME:-stockline}
       STOCKLINE_API_URL: http://localhost:8000
-      STOCKLINE_FRONTEND_URL: ${STOCKLINE_FRONTEND_URL:-https://stockline-ai.vercel.app}
+      STOCKLINE_FRONTEND_URL: ${STOCKLINE_FRONTEND_URL:-https://stock-ai.kpihx-labs.com}
       WHATS_PROXY_STATE_DIR: /app/wa-state
     ports:
       - "40000-40020:40000-40020/udp"
@@ -55,21 +55,21 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
-      - "traefik.http.routers.stockline.rule=Host(`stockline-ai.kpihx-labs.com`)"
-      - "traefik.http.routers.stockline.entrypoints=websecure"
-      - "traefik.http.routers.stockline.tls=true"
-      - "traefik.http.routers.stockline.tls.certresolver=myresolver"
-      - "traefik.http.routers.stockline.middlewares=stockline-headers"
-      - "traefik.http.routers.stockline-fallback.rule=Host(`stockline-ai.homelab`)"
-      - "traefik.http.routers.stockline-fallback.entrypoints=websecure"
-      - "traefik.http.routers.stockline-fallback.tls=true"
-      - "traefik.http.routers.stockline-fallback.middlewares=stockline-headers"
-      - "traefik.http.services.stockline.loadbalancer.server.port=8000"
-      - "traefik.http.middlewares.stockline-headers.headers.browserxssfilter=true"
-      - "traefik.http.middlewares.stockline-headers.headers.contenttypenosniff=true"
+      - "traefik.http.routers.stock.rule=Host(`stock-api.kpihx-labs.com`)"
+      - "traefik.http.routers.stock.entrypoints=websecure"
+      - "traefik.http.routers.stock.tls=true"
+      - "traefik.http.routers.stock.tls.certresolver=myresolver"
+      - "traefik.http.routers.stock.middlewares=stock-headers"
+      - "traefik.http.routers.stock-fallback.rule=Host(`stock-api.homelab`)"
+      - "traefik.http.routers.stock-fallback.entrypoints=websecure"
+      - "traefik.http.routers.stock-fallback.tls=true"
+      - "traefik.http.routers.stock-fallback.middlewares=stock-headers"
+      - "traefik.http.services.stock.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.stock-headers.headers.browserxssfilter=true"
+      - "traefik.http.middlewares.stock-headers.headers.contenttypenosniff=true"
     networks:
       - proxy
-      - stockline
+      - stock
 
 volumes:
   pg_data:
@@ -78,5 +78,5 @@ volumes:
 networks:
   proxy:
     external: true
-  stockline:
+  stock:
     driver: bridge
