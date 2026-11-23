@@ -53,11 +53,13 @@ uv-publish: build  ## Publish to PyPI, requires UV_PUBLISH_TOKEN in the environm
 	@$(UV) publish
 	@echo "OK published"
 
-push:  ## Push the current branch to every remote
+push:  ## Push the current branch to GitLab first, then GitHub
 	@branch="$$(git branch --show-current)"; \
-	for remote in $$(git remote); do \
-		echo "==> pushing $$branch to $$remote"; \
-		git push "$$remote" "$$branch"; \
+	for remote in gitlab github; do \
+		if git remote get-url "$$remote" >/dev/null 2>&1; then \
+			echo "==> pushing $$branch to $$remote"; \
+			git push "$$remote" "$$branch"; \
+		fi; \
 	done
 
 status:  ## Short git status

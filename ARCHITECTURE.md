@@ -16,9 +16,9 @@ flowchart LR
     Image --> ID["&nbsp;&nbsp;&nbsp;&nbsp;Data&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- source: image&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- path: &nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- type: image&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- cNumber: 33612345678&nbsp;&nbsp;&nbsp;&nbsp;"]
     Text --> TD["&nbsp;&nbsp;&nbsp;&nbsp;Data&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- source: text&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- path: none&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- type: text&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- cNumber: 33612345678&nbsp;&nbsp;&nbsp;&nbsp;"]
 
-    CD --> STT["&nbsp;&nbsp;&nbsp;&nbsp;STT&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;Whisper ggml&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;turbo&nbsp;&nbsp;&nbsp;&nbsp;"]
+    CD --> STT["&nbsp;&nbsp;&nbsp;&nbsp;STT&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;NVIDIA NIM Whisper v3&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;(fallback Parakeet / whisper.cpp)&nbsp;&nbsp;&nbsp;&nbsp;"]
     VD --> STT
-    ID --> OCR["&nbsp;&nbsp;&nbsp;&nbsp;OCR&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;Tesseract&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;eng+fra&nbsp;&nbsp;&nbsp;&nbsp;"]
+    ID --> OCR["&nbsp;&nbsp;&nbsp;&nbsp;OCR / VLM&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;Nemotron 3.5 VL 120B&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;(fallback Tesseract eng+fra)&nbsp;&nbsp;&nbsp;&nbsp;"]
 
     STT --> TR["&nbsp;&nbsp;&nbsp;&nbsp;Data&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- source: &nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- path: &nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- type: &nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- transcript: &nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- cNumber: 33612345678&nbsp;&nbsp;&nbsp;&nbsp;"]
     OCR --> TR
@@ -46,5 +46,20 @@ flowchart LR
     CMD --> ENR["&nbsp;&nbsp;&nbsp;&nbsp;Enriched Data&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- client_id&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- client_stats&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- products (catalogue)&nbsp;&nbsp;&nbsp;&nbsp;"]
     ENR --> LLM["&nbsp;&nbsp;&nbsp;&nbsp;LLM&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;Nemotron 550B&nbsp;&nbsp;&nbsp;&nbsp;"]
     LLM -->|"query Command"| DB
-    LLM --> NORM["&nbsp;&nbsp;&nbsp;&nbsp;Normalized input&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- summary&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- past_orders (list)&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- command_id&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- product_id&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- client_id&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- recorded_at&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- delivery_date&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- price&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- quantity&nbsp;&nbsp;&nbsp;&nbsp;"]
+    LLM --> NORM["&nbsp;&nbsp;&nbsp;&nbsp;Normalized input&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- summary&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;- past_orders (list)&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- command_id&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- product_id&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- client_id&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- recorded_at&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- delivery_date&nbsp;&nbsp;&nbsp;&nbsp;<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;- price&nbsp;&nbsp;&nbsp;&nbsp;<br/>      - quantity&nbsp;&nbsp;&nbsp;&nbsp;"]
+```
+
+## Deployment Topology
+
+```
+[ Browser: https://stockline-ai.vercel.app ]
+        |  HTTPS REST / SSE / WSS + WebRTC Opus 48 kHz
+        v
+[ Traefik HTTPS: https://stockline-ai.kpihx-labs.com ]
+        |
+        v
+[ stockline-api (FastAPI :8000 + Node 22 Baileys/werift :3001) ] ---> [ stockline-postgres (PostgreSQL 17) ]
+        |
+        +--> backend/config.jsonc (bind-mounted & hot-reloaded on mtime change)
+        +--> NVIDIA NIM APIs (Whisper Large v3 gRPC, Parakeet gRPC, Nemotron 3.5 VL, Nemotron 3 Ultra 550B)
 ```

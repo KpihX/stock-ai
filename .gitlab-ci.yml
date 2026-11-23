@@ -1,9 +1,9 @@
 stages:
   - deploy
-  - sync
 
 variables:
   DOCKER_DRIVER: overlay2
+  GIT_CLEAN_FLAGS: -ffdx -e .env
 
 deploy_homelab:
   stage: deploy
@@ -12,6 +12,7 @@ deploy_homelab:
   only:
     - main
   script:
+    - echo "Deploying stockline-ai backend to homelab..."
     - echo "DEBUG=false" > .env
     - echo "JWT_SECRET=${JWT_SECRET:-$(openssl rand -base64 48)}" >> .env
     - echo "NVIDIA_API_KEY=$NVIDIA_API_KEY" >> .env
@@ -20,8 +21,24 @@ deploy_homelab:
     - echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> .env
     - echo "STOCKLINE_ADMIN_USER=admin" >> .env
     - echo "STOCKLINE_ADMIN_PASSWORD=$STOCKLINE_ADMIN_PASSWORD" >> .env
-    - docker compose build --no-cache
-    - docker compose up -d --remove-orphans
-    - docker image prune -f
-  after_script:
-    - docker run --rm -v "$PWD:/work" alpine chown -R $(id -u):$(id -g) /work
+    - echo "STOCKLINE_FRONTEND_URL=https://stockline-ai.vercel.app" >> .env
+    - docker builder prune -af --filter "until=1h" || true
+    - docker image prune -f || true
+    - docker compose -p stockline-ai config -q
+    - docker rm -f stockline-api || true
+    - docker compose -p stockline-ai up -d --build --remove-orphans
+    - |
+      for attempt in $(seq 1 30); do
+        status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' stockline-api 2>/dev/null || true)"
+        if [ "$status" = "healthy" ]; then
+          break
+        fi
+        if [ "$status" = "unhealthy" ]; then
+          docker logs --tail 100 stockline-api
+          exit 1
+        fi
+        sleep 2
+      done
+    - docker inspect --format '{{.State.Health.Status}}' stockline-api | grep -qx healthy
+    - docker exec stockline-api curl -fsS http://127.0.0.1:8000/health
+    - docker image prune -f || true

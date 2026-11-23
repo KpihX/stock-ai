@@ -1,18 +1,18 @@
 # Live End-to-End Verification Scenarios (`stockline-ai`)
 
-This document lists the reproducible live verification scenarios for the Stockline AI platform (`http://localhost:8000/admin` locally, `https://stockline-ai.kpihx-labs.com/admin` in production). Every runtime dependency (FastAPI, Node 22 Baileys listener, `whisper-cli` + `ggml-large-v3-turbo-q5_0.bin`, `ffmpeg`, `tesseract-ocr` `eng+fra`, PostgreSQL 17) runs inside the Docker stack with zero host-binary dependency.
+This document lists the reproducible live verification scenarios for the Stockline AI platform (`http://localhost:5173` / `http://localhost:8000` locally, `https://stockline-ai.vercel.app` + `https://stockline-ai.kpihx-labs.com` in production). The backend stack (FastAPI, Node 22 Baileys + `werift` VoIP listener, `nvidia-riva-client`, `ffmpeg`, `tesseract-ocr` `eng+fra`, PostgreSQL 17) runs inside Docker and consumes NVIDIA NIM STT/OCR/LLM services with hot-reloadable configuration in `backend/config.jsonc`.
 
 ```
-[ WhatsApp Client ] ──(Text / Voice .ogg / Image .png)──► [ Baileys WA Listener :3001 ]
-                                                                  │
-                                          (@lid -> E.164 resolution, dedup, media download)
-                                                                  ▼
-[ Admin UI / Pipeline n8n ] ◄──(SSE + pipeline_log)─── [ FastAPI CommandHandler :8000 ]
+[ WhatsApp Client ] ──(Text / Voice .ogg / Image .png / VoIP Call)──► [ Baileys + werift (:3001) ]
+                                                                                  │
+                                                          (@lid -> E.164, media download, VAD)
+                                                                                  ▼
+[ Vercel Admin UI ] ◄──(SSE + WebRTC + pipeline_log)─── [ FastAPI CommandHandler :8000 ]
          │                                                        │
          │                                  ┌─────────────────────┼─────────────────────┐
          │                                  ▼                     ▼                     ▼
-         │                          [ Whisper Turbo ]    [ Tesseract OCR ]     [ Phone Allowlist ]
-         │                           (Audio -> FR)        (Image -> Text)       (client table)
+         │                        [ NVIDIA Whisper v3 ]  [ Nemotron 3.5 VL ]   [ Phone Allowlist ]
+         │                        (Parakeet/whisper fb)  (Tesseract fallback)    (client table)
          │                                  └─────────────────────┼─────────────────────┘
          │                                                        ▼
          │                                      [ EnrichedData + Product Catalogue ]
@@ -64,3 +64,4 @@ docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB
 | **S12** | **Order cancellation (`action: "cancel"`) & stock refund** | `CLI-0001` (`33745717350`, KpihX) | Text / Voice | `"Annule ma dernière commande s'il te plaît"` | Nemotron detects `action="cancel"` and `target_command_id`; status becomes `cancelled` (restoring stock if previously `processed`) and sends a WhatsApp cancellation notice. |
 | **S13** | **Automatic stock decrementation on Approve** | Admin UI (`admin`) | HITL Decision | Approve an order of `4 × ART-PAIN-01` (initial stock `80`) | `product.stock` decrements automatically (`80 -> 76`); rejecting/cancelling a processed order restores the stock. |
 | **S14** | **Automatic WhatsApp intake acknowledgement** | Any registered client | Text / Voice / Image | Any valid order creation, modification or cancellation | Client immediately receives a WhatsApp ack (`whatsapp.ack` logged on `decision.hitl`) before manager review. |
+| **S15** | **Live WhatsApp VoIP call via WebRTC** | Registered client | VoIP Call | Inbound WhatsApp call answered in browser **Calls** tab | Bidirectional 48 kHz Opus audio, live STT transcript per utterance (`nvidia_whisper` / `nvidia_parakeet`), automatic post-hangup order extraction and WhatsApp ack. |

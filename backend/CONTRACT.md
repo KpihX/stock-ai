@@ -8,12 +8,15 @@ Turn messy supplier orders from WhatsApp voice notes, text and photos into valid
 
 ## Operations
 
-- version: print the installed package version.
-- status: print non secret runtime configuration.
-- ingest (planned): fetch a WhatsApp message or media and normalize it into an OrderEvent.
-- extract (planned): turn an OrderEvent into a list of typed OrderLine objects.
-- forecast (planned): turn order history into demand estimates per SKU and per day.
-- purchase (planned): turn a demand gap into a draft PurchaseOrder, never auto approved.
+- `version` (CLI): print the installed package version.
+- `status` (CLI): print non-secret runtime configuration.
+- `providers` (CLI): inspect active brick selection and required key presence.
+- `POST /webhooks/whatsapp` (API): ingest WhatsApp text, voice note, and image signals and normalize them into client orders (`create`, `modify`, `cancel`).
+- `GET /api/commands`, `GET /api/commands/stream`, `POST /api/commands/{id}/approve`: list orders, stream real-time SSE pipeline events, and apply HITL approval/rejection with stock updates and WhatsApp acks.
+- `/api/calls/*` (API): bridge inbound WhatsApp VoIP calls to browser WebRTC Opus 48 kHz, transcribe caller utterances via STT, and auto-commit orders on hangup.
+- `GET/POST /admin/config`, `/admin/products`, `/admin/clients`, `/admin/managers`, `/admin/whatsapp/*`: manage runtime configuration, catalogue, clients, staff, and WhatsApp pairing.
+- `forecast` (planned): turn order history into demand estimates per SKU and per day.
+- `purchase` (planned): turn a demand gap into a draft PurchaseOrder, never auto approved.
 
 ## Data types
 
@@ -26,10 +29,10 @@ Turn messy supplier orders from WhatsApp voice notes, text and photos into valid
 - 0 success.
 - 1 operation error with a message on stderr.
 - 2 invalid input or missing required argument.
-- Every CLI response is a JSON envelope with meta status and data, matching the whats-proxy convention.
+- Every CLI response is a JSON envelope with meta status and data.
 
 ## Transport mapping
 
-- CLI today: Typer commands with rich output.
-- Next: JSON mode with the same envelope, then a local JSON-RPC daemon if the live voice demo needs it.
-- WhatsApp transport: delegated to the installed whats-proxy CLI, never reimplemented here.
+- CLI: Typer commands (`stockline-ai`) with Rich output.
+- HTTP / SSE / WebSocket API: FastAPI (`stockline-api`) deployed behind Traefik HTTPS at `https://stockline-ai.kpihx-labs.com`.
+- WhatsApp & VoIP transport: embedded Node 22 listener (`backend/wa/`) using `@innovatorssoft/baileys` and `werift` over localhost HTTP + WebRTC.

@@ -3,9 +3,10 @@ services:
     ports:
       - "5432:5432"
   api:
+    environment:
+      STOCKLINE_FRONTEND_URL: http://localhost:5173/
     ports:
       - "8000:8000"
-      - "40000-40020:40000-40020/udp"
 
 networks:
   proxy:

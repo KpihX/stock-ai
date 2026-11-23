@@ -1,13 +1,16 @@
 # TODO.md
 
+## Done
+
+- [x] A0 ingestion: WhatsApp multi-modality intake (text, `.ogg` voice notes, images, and inbound VoIP calls) via Baileys + NVIDIA NIM STT/OCR.
+- [x] A2 extraction: structured order action normalization (`create`, `modify`, `cancel`) with `nvidia/nemotron-3-ultra-550b-a55b` and catalogue matching.
+- [x] A3 customer memory: PostgreSQL 17 client stats, `last_order_lines`, `usual_lines`, and open command history.
+- [x] Human-in-the-loop approval gate: Approve/Reject with comments, automatic stock adjustment, and WhatsApp client notifications.
+- [x] Live voice lane: bidirectional 48 kHz Opus WebRTC bridge (`werift` + `opusscript` + Baileys VoIP) in the React Calls tab.
+- [x] Production deployment: PVE Docker + Traefik backend (`stockline-ai.kpihx-labs.com`) and Vercel React dashboard (`stockline-ai.vercel.app`).
+
 ## Active backlog
 
-- Implement A0 ingestion: WhatsApp message fetch plus media-download plus whisper and tesseract normalization.
-- Implement A2 extraction with PydanticAI and a typed OrderLine result.
-- Implement A3 customer memory with a small SQLite store and catalog embeddings.
-- Implement A4 forecasting with statsforecast and a LightGBM baseline.
-- Implement A5 purchasing with draft orders and a human approval gate.
-- Implement A1 supervisor with LangGraph state, checkpoints and interrupts.
-- Build the live voice lane with Pipecat and local whisper and Piper.
-- Build the demo dashboard showing the agent graph and the approve button.
-- Add integration tests with synthetic Stockline orders.
+- [ ] Implement A4 demand forecasting with statsforecast and a LightGBM baseline.
+- [ ] Implement A5 purchasing suggestions with draft purchase orders and human approval.
+- [ ] Polish dashboard `.decision-cell` spacing on narrow 2-column cards.

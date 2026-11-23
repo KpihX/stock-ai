@@ -38,7 +38,7 @@
       "language": "fr",
       "sample_rate": 16000,
       "punctuation": true,
-      "fallback": "whisper",
+      "fallback": "nvidia_parakeet",
       "bin": "whisper-cli",
       "models_dir": "/app/models/whisper",
       "prompt": "Commande alimentaire grossiste en français. Unités : kilos, kg, pièces, unités, caisses, pour demain, lundi, mardi soir, mercredi."

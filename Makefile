@@ -4,7 +4,7 @@ SHELL := /bin/zsh
 DC := env PATH=/usr/bin:/usr/local/bin:/usr/libexec/docker/cli-plugins docker compose
 ROOT := $(shell pwd)
 
-.PHONY: help init seed seed-random setup db db-logs backend frontend dev up down logs ps check deploy-frontend
+.PHONY: help init seed seed-random setup db db-logs backend frontend dev up down logs ps check deploy-frontend push
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \
@@ -74,4 +74,13 @@ check:  ## Run backend checks
 
 deploy-frontend:  ## Deploy the frontend to Vercel (requires vercel login)
 	@cd frontend && vercel --prod
+
+push:  ## Push the current branch to GitLab first, then GitHub
+	@branch="$$(git branch --show-current)"; \
+	for remote in gitlab github; do \
+		if git remote get-url "$$remote" >/dev/null 2>&1; then \
+			echo "==> pushing $$branch to $$remote"; \
+			git push "$$remote" "$$branch"; \
+		fi; \
+	done
 

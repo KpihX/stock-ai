@@ -12,10 +12,18 @@ Two providers are supported:
 
 | Provider | Cost | Status |
 |---|---|---|
-| `browser_webrtc` | free | current fallback, microphone in the browser, no real WhatsApp call |
-| `baileys_voip` | free | target, real WhatsApp call via `@innovatorssoft/baileys` |
+| `browser_webrtc` | free | microphone fallback in the browser, no real WhatsApp call |
+| `baileys_voip` | free | active production bridge via `@innovatorssoft/baileys` + `werift` 48 kHz Opus |
 
-The provider is selected in `backend/config.jsonc` under `settings.calls.provider`. Never hardcode it.
+The provider is selected in `backend/config.jsonc` under `selection.calls` (with generic parameters under `settings.calls`). Never hardcode it.
+
+## 2. Production Implementation Notes (Shipped)
+
+The active VoIP pipeline in `backend/wa/src/voip.ts` and `backend/wa/src/webrtc-bridge.ts` upgrades the initial raw WebSocket PCM proposal to a true bidirectional WebRTC bridge:
+
+- Uses `await sock.getVoipClient()` (single built-in client on the existing Baileys socket) plus `backend/wa/scripts/patch-baileys-voip.mjs` (`postinstall`) so WASM `eventType === 2` does not tear down ringing calls prematurely.
+- Bridges caller 16 kHz PCM <-> 48 kHz Opus WebRTC (`werift` + `opusscript`) directly to `frontend/src/components/CallPanel.tsx`.
+- Segments caller utterances with RMS VAD (`vad_rms_threshold`, `vad_silence_ms`, `vad_max_utterance_ms` in `backend/config.jsonc`) and transcribes each chunk in sequence (`utterance_seq`) via the active STT provider (`nvidia_whisper` / `nvidia_parakeet`), waiting for `in_flight` STT jobs before auto-committing the order on hangup.
 
 ## 2. How the target provider works
 
