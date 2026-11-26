@@ -35,7 +35,7 @@ npm run preview
 
 ## Deploy to Vercel
 
-Production URLs: `https://stock-ai.kpihx-labs.com` (alias `https://stock-ai.vercel.app`)
+Production URL: `https://stock-ai.kpihx-labs.com`
 
 ```bash
 vercel --prod

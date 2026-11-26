@@ -52,7 +52,7 @@ flowchart LR
 ## Deployment Topology
 
 ```
-[ Browser: https://stock-ai.kpihx-labs.com (stock-ai.vercel.app) ]
+[ Browser: https://stock-ai.kpihx-labs.com ]
         |  HTTPS REST / SSE / WSS + WebRTC Opus 48 kHz
         v
 [ Traefik HTTPS: https://stock-api.kpihx-labs.com ]

@@ -1,6 +1,6 @@
 # Live End-to-End Verification Scenarios (`stock-ai`)
 
-This document lists the reproducible live verification scenarios for the Stock AI platform (`http://localhost:5173` / `http://localhost:8000` locally, `https://stock-ai.kpihx-labs.com` / `https://stock-ai.vercel.app` + `https://stock-api.kpihx-labs.com` in production). The backend stack (FastAPI, Node 22 Baileys + `werift` VoIP listener, `nvidia-riva-client`, `ffmpeg`, `tesseract-ocr` `eng+fra`, PostgreSQL 17) runs inside Docker and consumes NVIDIA NIM STT/OCR/LLM services with hot-reloadable configuration in `backend/config.jsonc`.
+This document lists the reproducible live verification scenarios for the Stock AI platform (`http://localhost:5173` / `http://localhost:8000` locally, `https://stock-ai.kpihx-labs.com` + `https://stock-api.kpihx-labs.com` in production). The backend stack (FastAPI, Node 22 Baileys + `werift` VoIP listener, `nvidia-riva-client`, `ffmpeg`, `tesseract-ocr` `eng+fra`, PostgreSQL 17) runs inside Docker and consumes NVIDIA NIM STT/OCR/LLM services with hot-reloadable configuration in `backend/config.jsonc`.
 
 ```
 [ WhatsApp Client ] ──(Text / Voice .ogg / Image .png / VoIP Call)──► [ Baileys + werift (:3001) ]

@@ -6,7 +6,7 @@
 - Added extensible NVIDIA NIM STT (`nvidia_whisper` using `openai/whisper-large-v3` and `nvidia_parakeet` using `nvidia/parakeet-1.1b-rnnt-multilingual-asr` via `nvidia-riva-client`) and Vision OCR (`nemotron_vl` using `nvidia/nemotron-3.5-super-vl-120b-a12b`) with automatic fallbacks.
 - Exposed all provider parameters, `ocr_prompt`, `system_prompt`, and `overrides` in `backend/config.jsonc`, bind-mounted it into Docker, and added mtime-based `get_config()` hot-reloading.
 - Made `backend/db/init.sql` self-contained (`CREATE TABLE IF NOT EXISTS client`), derived FastAPI `version` from `get_version()`, and wrapped `.decision-cell` action buttons on compact dashboard tables.
-- Slimmed `backend/Dockerfile` for production deployment on the homelab PVE server with Traefik HTTPS (`stock-api.kpihx-labs.com`) and deployed the Vercel React frontend (`stock-ai.kpihx-labs.com` / `stock-ai.vercel.app`) with Cloudflare Access cleared for public API CORS/SSE/WebSocket traffic.
+- Slimmed `backend/Dockerfile` for production deployment on the homelab PVE server with Traefik HTTPS (`stock-api.kpihx-labs.com`) and deployed the Vercel React frontend (`stock-ai.kpihx-labs.com`) with Cloudflare Access cleared for public API CORS/SSE/WebSocket traffic.
 
 ## 0.1.0 - 2026-11-22
 

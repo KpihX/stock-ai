@@ -6,7 +6,7 @@ Agentic AI intake, order normalization, and human-in-the-loop (HITL) approval pl
 
 | Surface | URL | Hosting |
 | --- | --- | --- |
-| Admin Dashboard (Frontend) | https://stock-ai.kpihx-labs.com (alias `https://stock-ai.vercel.app`) | Vercel (React + Vite + TypeScript) |
+| Admin Dashboard (Frontend) | https://stock-ai.kpihx-labs.com | Vercel (React + Vite + TypeScript) |
 | API & WhatsApp/VoIP Bridge | https://stock-api.kpihx-labs.com | Proxmox Homelab Docker + Traefik HTTPS |
 | Health Check | https://stock-api.kpihx-labs.com/health | FastAPI (`{"status":"ok"}`) |
 

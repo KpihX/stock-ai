@@ -7,7 +7,7 @@
 - [x] A3 customer memory: PostgreSQL 17 client stats, `last_order_lines`, `usual_lines`, and open command history.
 - [x] Human-in-the-loop approval gate: Approve/Reject with comments, automatic stock adjustment, and WhatsApp client notifications.
 - [x] Live voice lane: bidirectional 48 kHz Opus WebRTC bridge (`werift` + `opusscript` + Baileys VoIP) in the React Calls tab.
-- [x] Production deployment: PVE Docker + Traefik backend (`stock-api.kpihx-labs.com`) and Vercel React dashboard (`stock-ai.kpihx-labs.com` / `stock-ai.vercel.app`).
+- [x] Production deployment: PVE Docker + Traefik backend (`stock-api.kpihx-labs.com`) and Vercel React dashboard (`stock-ai.kpihx-labs.com`).
 
 ## Active backlog
 
